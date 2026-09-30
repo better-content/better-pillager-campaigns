@@ -1,4 +1,4 @@
-package com.bettercontent.pillagercampaigns.api
+package com.bettercontent.betterpillagercampaigns.api
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test

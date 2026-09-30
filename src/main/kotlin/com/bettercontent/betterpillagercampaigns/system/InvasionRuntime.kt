@@ -1,10 +1,10 @@
-package com.bettercontent.pillagercampaigns.system
+package com.bettercontent.betterpillagercampaigns.system
 
-import com.bettercontent.pillagercampaigns.PillagerCampaignsMod
-import com.bettercontent.pillagercampaigns.core.DirectorEffect
-import com.bettercontent.pillagercampaigns.core.EffectKind
-import com.bettercontent.pillagercampaigns.core.EffectResult
-import com.bettercontent.pillagercampaigns.core.StrategicFrontier
+import com.bettercontent.betterpillagercampaigns.PillagerCampaignsMod
+import com.bettercontent.betterpillagercampaigns.core.DirectorEffect
+import com.bettercontent.betterpillagercampaigns.core.EffectKind
+import com.bettercontent.betterpillagercampaigns.core.EffectResult
+import com.bettercontent.betterpillagercampaigns.core.StrategicFrontier
 import net.minecraft.core.BlockPos
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.network.chat.Component
@@ -68,7 +68,7 @@ object InvasionRuntime {
     }
 
     private fun announceWave(server: MinecraftServer, effect: DirectorEffect) {
-        val message = if (effect.encounterKind == com.bettercontent.pillagercampaigns.core.EncounterKind.ASSAULT)
+        val message = if (effect.encounterKind == com.bettercontent.betterpillagercampaigns.core.EncounterKind.ASSAULT)
             "Pillager assault wave ${effect.waveIndex + 1}/3 has arrived."
         else "A pillager scouting party has arrived."
         warningPlayerIds(effect).mapNotNull { player(server, it) }.forEach { recipient ->
@@ -179,7 +179,7 @@ object InvasionRuntime {
         PillagerCampaignsMod.LOGGER.info("Materialized {} {} wave {} packet with {} members for {}",
             effect.encounterKind.name.lowercase(), effect.invasionId, effect.waveIndex, spawned.size, target.scoreboardName)
         net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
-            com.bettercontent.pillagercampaigns.api.CampaignMaterializedEvent(target, effect.invasionId, effect.waveIndex, spawned.size))
+            com.bettercontent.betterpillagercampaigns.api.CampaignMaterializedEvent(target, effect.invasionId, effect.waveIndex, spawned.size))
         return true
     }
 

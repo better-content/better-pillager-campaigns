@@ -1,11 +1,11 @@
-package com.bettercontent.pillagercampaigns.data
+package com.bettercontent.betterpillagercampaigns.data
 
-import com.bettercontent.pillagercampaigns.PillagerCampaignsMod
-import com.bettercontent.pillagercampaigns.core.DirectorFrame
-import com.bettercontent.pillagercampaigns.core.DirectorSnapshot
-import com.bettercontent.pillagercampaigns.core.DirectorTransition
-import com.bettercontent.pillagercampaigns.core.InvasionDirector
-import com.bettercontent.pillagercampaigns.core.InvasionRuntimeSpec
+import com.bettercontent.betterpillagercampaigns.PillagerCampaignsMod
+import com.bettercontent.betterpillagercampaigns.core.DirectorFrame
+import com.bettercontent.betterpillagercampaigns.core.DirectorSnapshot
+import com.bettercontent.betterpillagercampaigns.core.DirectorTransition
+import com.bettercontent.betterpillagercampaigns.core.InvasionDirector
+import com.bettercontent.betterpillagercampaigns.core.InvasionRuntimeSpec
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -54,7 +54,7 @@ class PillagerWorldData private constructor(private var restored: DirectorSnapsh
     }
 
     companion object {
-        private const val KEY = "pillager_campaigns_world"
+        private const val KEY = "better_pillager_campaigns_world"
         private val JSON = Json { encodeDefaults = true; ignoreUnknownKeys = false }
 
         fun get(server: MinecraftServer): PillagerWorldData {
@@ -69,12 +69,12 @@ class PillagerWorldData private constructor(private var restored: DirectorSnapsh
         internal fun load(tag: CompoundTag, worldSeed: Long): PillagerWorldData {
             val schema = tag.getInt("schema")
             if (schema !in 2..DirectorSnapshot.CURRENT_SCHEMA_VERSION || !tag.contains("snapshot")) {
-                if (!tag.isEmpty) PillagerCampaignsMod.LOGGER.warn("Discarding unsupported Pillager Campaigns state schema {}", schema)
+                if (!tag.isEmpty) PillagerCampaignsMod.LOGGER.warn("Discarding unsupported Better Pillager Campaigns state schema {}", schema)
                 return PillagerWorldData(DirectorSnapshot(worldSeed = worldSeed))
             }
             var snapshot = runCatching { JSON.decodeFromString<DirectorSnapshot>(tag.getString("snapshot")) }
                 .getOrElse { error ->
-                    PillagerCampaignsMod.LOGGER.error("Invalid Pillager Campaigns invasion state; starting fresh", error)
+                    PillagerCampaignsMod.LOGGER.error("Invalid Better Pillager Campaigns invasion state; starting fresh", error)
                     DirectorSnapshot(worldSeed = worldSeed)
                 }
             if (schema == 2) {
@@ -86,7 +86,7 @@ class PillagerWorldData private constructor(private var restored: DirectorSnapsh
                     }
                 }
                 PillagerCampaignsMod.LOGGER.warn(
-                    "Migrated Pillager Campaigns schema 2 clocks to schema 4; active near-player campaigns were cleared")
+                    "Migrated Better Pillager Campaigns schema 2 clocks to schema 4; active near-player campaigns were cleared")
             }
             if (schema == 3) {
                 snapshot = snapshot.copy(schemaVersion = DirectorSnapshot.CURRENT_SCHEMA_VERSION,
@@ -100,13 +100,13 @@ class PillagerWorldData private constructor(private var restored: DirectorSnapsh
                         invasion.strategicPosition = null
                         invasion.strategicTravelMilliBlocks = 0L
                         invasion.strategicJourneyTotalMilliBlocks = 0L
-                        invasion.strategicFrontier = com.bettercontent.pillagercampaigns.core.StrategicFrontier.UNKNOWN
-                        invasion.phase = com.bettercontent.pillagercampaigns.core.InvasionPhase.APPROACHING
+                        invasion.strategicFrontier = com.bettercontent.betterpillagercampaigns.core.StrategicFrontier.UNKNOWN
+                        invasion.phase = com.bettercontent.betterpillagercampaigns.core.InvasionPhase.APPROACHING
                         invasion.lastRouteFailure = "migrated_schema_3"
                     }
                 }
                 PillagerCampaignsMod.LOGGER.warn(
-                    "Migrated Pillager Campaigns schema 3 active encounters to virtual strategic travel")
+                    "Migrated Better Pillager Campaigns schema 3 active encounters to virtual strategic travel")
             }
             return PillagerWorldData(snapshot).also { it.runtimeRevision = tag.getString("runtimeRevision").ifBlank { "unresolved" } }
         }

@@ -1,6 +1,6 @@
-package com.bettercontent.pillagercampaigns
+package com.bettercontent.betterpillagercampaigns
 
-import com.bettercontent.pillagercampaigns.gametest.PillagerCampaignsGameTests
+import com.bettercontent.betterpillagercampaigns.gametest.PillagerCampaignsGameTests
 import com.mojang.logging.LogUtils
 import net.minecraftforge.common.MinecraftForge
 import net.minecraftforge.event.RegisterGameTestsEvent
@@ -24,7 +24,7 @@ class PillagerCampaignsMod {
     }
 
     companion object {
-        const val MOD_ID: String = "pillager_campaigns"
+        const val MOD_ID: String = "better_pillager_campaigns"
         val LOGGER: Logger = LogUtils.getLogger()
     }
 }

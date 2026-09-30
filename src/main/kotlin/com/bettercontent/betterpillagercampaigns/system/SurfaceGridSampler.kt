@@ -1,7 +1,7 @@
-package com.bettercontent.pillagercampaigns.system
+package com.bettercontent.betterpillagercampaigns.system
 
-import com.bettercontent.pillagercampaigns.core.SurfaceCell
-import com.bettercontent.pillagercampaigns.core.SurfaceGridObservation
+import com.bettercontent.betterpillagercampaigns.core.SurfaceCell
+import com.bettercontent.betterpillagercampaigns.core.SurfaceGridObservation
 import net.minecraft.core.BlockPos
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer

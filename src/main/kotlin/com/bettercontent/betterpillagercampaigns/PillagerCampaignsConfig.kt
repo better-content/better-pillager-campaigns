@@ -1,6 +1,6 @@
-package com.bettercontent.pillagercampaigns
+package com.bettercontent.betterpillagercampaigns
 
-import com.bettercontent.pillagercampaigns.core.InvasionRules
+import com.bettercontent.betterpillagercampaigns.core.InvasionRules
 import net.minecraftforge.common.ForgeConfigSpec
 
 object PillagerCampaignsConfig {

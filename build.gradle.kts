@@ -25,7 +25,7 @@ group = property("mod_group") as String
 version = modVersion
 
 base {
-    archivesName.set("pillager-campaigns")
+    archivesName.set("better-pillager-campaigns")
 }
 
 evaluationDependsOn(":invasion-core")
@@ -64,7 +64,7 @@ minecraft {
         }
         create("server") {
             workingDirectory(project.file("run/campaign-harness-server"))
-            property("pillager_campaigns.harness", "true")
+            property("better_pillager_campaigns.harness", "true")
             property("mixin.env.remapRefMap", "true")
             property("mixin.env.refMapRemappingFile", file("build/createSrgToMcp/output.srg").absolutePath)
             arg("--nogui")
@@ -95,7 +95,7 @@ repositories {
     maven("https://www.cursemaven.com") { content { includeGroup("curse.maven") } }
     ivy {
         name = "downedPlayerRevivalLocal"
-        url = uri(betterContentJar("downed-player-revival", "downed-player-revival-1.0.0.jar").parentFile)
+        url = uri(betterContentJar("better-deaths-door", "better-deaths-door-1.0.0.jar").parentFile)
         patternLayout { artifact("[artifact]-[revision].[ext]") }
         metadataSources { artifact() }
         content { includeGroup("bettercontent.local") }
@@ -110,8 +110,8 @@ dependencies {
     runtimeOnly(fg.deobf("curse.maven:tconstruct-74072:7449219"))
     runtimeOnly(fg.deobf("curse.maven:mantle-74924:7563777"))
     testImplementation(kotlin("test"))
-    compileOnly(fg.deobf("bettercontent.local:downed-player-revival:1.0.0"))
-    runtimeOnly(fg.deobf("bettercontent.local:downed-player-revival:1.0.0"))
+    compileOnly(fg.deobf("bettercontent.local:better-deaths-door:1.0.0"))
+    runtimeOnly(fg.deobf("bettercontent.local:better-deaths-door:1.0.0"))
     runtimeOnly(fg.deobf("curse.maven:it-takes-a-pillage-635843:4981343"))
     runtimeOnly(fg.deobf("curse.maven:savage-and-ravage-381736:7115735"))
     runtimeOnly(fg.deobf("curse.maven:blueprint-382216:6408581"))
@@ -198,7 +198,7 @@ val stageRuntimeJar by tasks.registering(Copy::class) {
     dependsOn(tasks.named("reobfJar"))
     from(layout.buildDirectory.file("reobfJar/output.jar"))
     into(layout.buildDirectory.dir("libs"))
-    rename { "pillager-campaigns-${modVersion}.jar" }
+    rename { "better-pillager-campaigns-${modVersion}.jar" }
 }
 
 tasks.assemble {

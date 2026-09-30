@@ -1,4 +1,4 @@
-package com.bettercontent.pillagercampaigns.system
+package com.bettercontent.betterpillagercampaigns.system
 
 import kotlin.test.Test
 import kotlin.test.assertFalse

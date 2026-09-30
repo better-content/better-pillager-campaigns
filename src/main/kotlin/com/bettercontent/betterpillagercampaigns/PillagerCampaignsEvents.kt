@@ -1,12 +1,12 @@
-package com.bettercontent.pillagercampaigns
+package com.bettercontent.betterpillagercampaigns
 
-import com.bettercontent.pillagercampaigns.core.*
-import com.bettercontent.pillagercampaigns.data.PillagerWorldData
-import com.bettercontent.pillagercampaigns.data.TerrainAtlasData
-import com.bettercontent.pillagercampaigns.system.InvasionRoster
-import com.bettercontent.pillagercampaigns.system.InvasionRuntime
-import com.bettercontent.pillagercampaigns.system.SurfaceGridSampler
-import com.bettercontent.pillagercampaigns.system.InjuryCompat
+import com.bettercontent.betterpillagercampaigns.core.*
+import com.bettercontent.betterpillagercampaigns.data.PillagerWorldData
+import com.bettercontent.betterpillagercampaigns.data.TerrainAtlasData
+import com.bettercontent.betterpillagercampaigns.system.InvasionRoster
+import com.bettercontent.betterpillagercampaigns.system.InvasionRuntime
+import com.bettercontent.betterpillagercampaigns.system.SurfaceGridSampler
+import com.bettercontent.betterpillagercampaigns.system.InjuryCompat
 import com.mojang.brigadier.Command
 import com.mojang.brigadier.arguments.StringArgumentType
 import kotlinx.serialization.encodeToString
@@ -229,7 +229,7 @@ object PillagerCampaignsEvents {
 
     @SubscribeEvent
     fun onRegisterCommands(event: RegisterCommandsEvent) {
-        val root = Commands.literal("pillager_campaigns")
+        val root = Commands.literal("better_pillager_campaigns")
             .then(Commands.literal("status")
                 .executes { status(it.source, null) }
                 .then(Commands.argument("player", StringArgumentType.word()).executes { status(it.source, StringArgumentType.getString(it, "player")) }))
@@ -378,7 +378,7 @@ object PillagerCampaignsEvents {
     }
 
     private fun exportSpec(source: CommandSourceStack): Int {
-        val directory = source.server.getWorldPath(LevelResource.ROOT).resolve("pillager_campaigns/exports")
+        val directory = source.server.getWorldPath(LevelResource.ROOT).resolve("better_pillager_campaigns/exports")
         Files.createDirectories(directory)
         val target = directory.resolve("invasion-runtime-spec.json")
         val temporary = directory.resolve("invasion-runtime-spec.json.tmp")

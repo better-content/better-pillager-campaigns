@@ -1,6 +1,6 @@
-package com.bettercontent.pillagercampaigns.runner
+package com.bettercontent.betterpillagercampaigns.runner
 
-import com.bettercontent.pillagercampaigns.core.*
+import com.bettercontent.betterpillagercampaigns.core.*
 import java.io.File
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString

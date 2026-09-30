@@ -1,4 +1,4 @@
-package com.bettercontent.pillagercampaigns.system
+package com.bettercontent.betterpillagercampaigns.system
 
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.world.entity.ai.goal.Goal

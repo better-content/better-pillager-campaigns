@@ -1,8 +1,8 @@
-package com.bettercontent.pillagercampaigns.system
+package com.bettercontent.betterpillagercampaigns.system
 
-import com.bettercontent.pillagercampaigns.CampaignHarnessCommands
-import com.bettercontent.pillagercampaigns.core.*
-import com.bettercontent.pillagercampaigns.data.PillagerWorldData
+import com.bettercontent.betterpillagercampaigns.CampaignHarnessCommands
+import com.bettercontent.betterpillagercampaigns.core.*
+import com.bettercontent.betterpillagercampaigns.data.PillagerWorldData
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import net.minecraft.nbt.CompoundTag

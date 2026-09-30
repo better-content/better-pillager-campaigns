@@ -14,7 +14,7 @@ dependencies {
 
 kotlin { jvmToolchain(17) }
 
-application { mainClass.set("com.bettercontent.pillagercampaigns.runner.InvasionRunner") }
+application { mainClass.set("com.bettercontent.betterpillagercampaigns.runner.InvasionRunner") }
 
 tasks.test { useJUnitPlatform() }
 tasks.named<JavaExec>("run") { standardInput = System.`in` }

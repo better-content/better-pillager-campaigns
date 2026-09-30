@@ -7,5 +7,5 @@ pluginManagement {
     }
 }
 
-rootProject.name = "pillager-campaigns"
+rootProject.name = "better-pillager-campaigns"
 include("invasion-core", "runner")

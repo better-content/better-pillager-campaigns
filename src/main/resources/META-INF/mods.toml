@@ -7,7 +7,7 @@ issueTrackerURL="${modIssueTrackerUrl}"
 modId="${modId}"
 version="${modVersion}"
 displayName="${modName}"
-displayURL="https://github.com/better-content/pillager-campaigns"
+displayURL="https://github.com/better-content/better-pillager-campaigns"
 authors="${modAuthors}"
 description='''
 ${modDescription}
@@ -35,7 +35,7 @@ ordering="NONE"
 side="BOTH"
 
 [[dependencies.${modId}]]
-modId="downed_player_revival"
+modId="better_deaths_door"
 mandatory=false
 versionRange="[1.0.0,)"
 ordering="AFTER"

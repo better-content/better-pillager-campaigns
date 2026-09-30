@@ -1,9 +1,9 @@
-package com.bettercontent.pillagercampaigns.system
+package com.bettercontent.betterpillagercampaigns.system
 
-import com.bettercontent.pillagercampaigns.PillagerCampaignsConfig
-import com.bettercontent.pillagercampaigns.core.InvasionRuntimeSpec
-import com.bettercontent.pillagercampaigns.core.RecruitRole
-import com.bettercontent.pillagercampaigns.core.RecruitSpec
+import com.bettercontent.betterpillagercampaigns.PillagerCampaignsConfig
+import com.bettercontent.betterpillagercampaigns.core.InvasionRuntimeSpec
+import com.bettercontent.betterpillagercampaigns.core.RecruitRole
+import com.bettercontent.betterpillagercampaigns.core.RecruitSpec
 import net.minecraft.resources.ResourceLocation
 import net.minecraftforge.registries.ForgeRegistries
 

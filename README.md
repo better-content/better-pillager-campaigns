@@ -1,6 +1,6 @@
-# Pillager Campaigns
+# Better Pillager Campaigns
 
-Pillager Campaigns is a server-side Minecraft Forge mod for Minecraft 1.20.1. It supplies frequent overland scout pressure and sparse, warned pillager assaults for Survival players.
+Better Pillager Campaigns is a server-side Minecraft Forge mod for Minecraft 1.20.1. It supplies frequent overland scout pressure and sparse, warned pillager assaults for Survival players.
 
 Each player has independent eligible-time clocks: scouts arrive every 6–12 minutes with 3–6 members and withdraw after two active minutes; assaults arrive every 60–120 minutes, warn two surface minutes before arrival, then deliver three progress-gated waves of 16–24 members for one player. Nearby players within 64 blocks share one scaled encounter, capped at 48 members per wave. Groups dispatch early from deterministic virtual origins 512–768 blocks away so those windows remain arrival windows, then advance immaterially at 1.6 blocks/second for scouts or 1 block/second for assaults. This strategic leg never loads or requires distant chunks.
 
@@ -23,26 +23,26 @@ Java 17 and the checked-in Gradle wrapper are required.
 
 ## Interactive campaign harness
 
-`runCampaignHarnessServer` starts an isolated localhost server on port `25566` with only Forge, KotlinForForge, Pillager Campaigns, It Takes a Pillage, Savage & Ravage, and Blueprint. Its flat Survival world is retained under the ignored `run/campaign-harness-server/` directory. The first launch follows Minecraft's normal EULA acknowledgement flow; after accepting it there, rerun the task. Start `runCampaignHarnessClient` in another shell and connect to `127.0.0.1:25566`.
+`runCampaignHarnessServer` starts an isolated localhost server on port `25566` with only Forge, KotlinForForge, Better Pillager Campaigns, It Takes a Pillage, Savage & Ravage, and Blueprint. Its flat Survival world is retained under the ignored `run/campaign-harness-server/` directory. The first launch follows Minecraft's normal EULA acknowledgement flow; after accepting it there, rerun the task. Start `runCampaignHarnessClient` in another shell and connect to `127.0.0.1:25566`.
 
 The server run enables permission-four harness commands that do not register in an ordinary launch. Enter them in the dedicated-server console without a leading slash:
 
 ```text
-pillager_campaigns harness spawn scout immediate <player> [intensity]
-pillager_campaigns harness spawn assault immediate <player> [intensity]
-pillager_campaigns harness spawn scout routed <player> [intensity]
-pillager_campaigns harness spawn assault routed <player> [intensity]
-pillager_campaigns harness next_wave <player>
-pillager_campaigns harness protect <player>
-pillager_campaigns inspect <player>
-pillager_campaigns reset <player>
+better_pillager_campaigns harness spawn scout immediate <player> [intensity]
+better_pillager_campaigns harness spawn assault immediate <player> [intensity]
+better_pillager_campaigns harness spawn scout routed <player> [intensity]
+better_pillager_campaigns harness spawn assault routed <player> [intensity]
+better_pillager_campaigns harness next_wave <player>
+better_pillager_campaigns harness protect <player>
+better_pillager_campaigns inspect <player>
+better_pillager_campaigns reset <player>
 ```
 
 Intensity is optional and bounded to `0..5`. `immediate` selects loaded terrain in the normal 48–72-block arrival band while bypassing strategic travel; all roster, packet, spawn, single-path, targeting, and cleanup behavior remains real. `routed` expedites the virtual strategic leg but leaves production local-approach selection and validation in place. `next_wave` is accepted only after the current assault wave has fully materialized. `protect` grants a test-only invulnerability ability while retaining Survival mode, so a routed campaign can be observed without combat ending the target's soak. Use `resetCampaignHarnessWorld` when an explicitly fresh harness world is wanted.
 
 The `mvp` runner gate proves deterministic Core properties only: per-player cadence, bounded scaling, composition, effect lifecycle, and terminal resolution under authored surface observations. It does not simulate Minecraft combat, entity AI, terrain, or player behavior.
 
-Export the exact available roster and scalar rules from a running instance with `/pillager_campaigns export_runtime_spec`. The file is written beneath the world at `pillager_campaigns/exports/invasion-runtime-spec.json`.
+Export the exact available roster and scalar rules from a running instance with `/better_pillager_campaigns export_runtime_spec`. The file is written beneath the world at `better_pillager_campaigns/exports/invasion-runtime-spec.json`.
 
 ## Architecture
 
@@ -56,11 +56,11 @@ World saves use campaign schema 4. Schema-2 eligible clocks, cadence, sequence, 
 
 ## Commands
 
-- `/pillager_campaigns status [player]` reports cadence, encounter phase, virtual progress, and the last local-route result
-- `/pillager_campaigns force [scout|assault] [player]` succeeds only when a real encounter materializes on a loaded, validated local approach; rejection leaves pressure unchanged
-- `/pillager_campaigns inspect [player]` reports the live encounter, wave, targeting, provenance, virtual journey, local-route diagnostics, and roster state
-- `/pillager_campaigns reset [player]`
-- `/pillager_campaigns export_runtime_spec`
+- `/better_pillager_campaigns status [player]` reports cadence, encounter phase, virtual progress, and the last local-route result
+- `/better_pillager_campaigns force [scout|assault] [player]` succeeds only when a real encounter materializes on a loaded, validated local approach; rejection leaves pressure unchanged
+- `/better_pillager_campaigns inspect [player]` reports the live encounter, wave, targeting, provenance, virtual journey, local-route diagnostics, and roster state
+- `/better_pillager_campaigns reset [player]`
+- `/better_pillager_campaigns export_runtime_spec`
 
 ## Community
 

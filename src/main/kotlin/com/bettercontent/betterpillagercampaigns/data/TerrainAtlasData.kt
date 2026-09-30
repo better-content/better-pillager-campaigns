@@ -1,7 +1,7 @@
-package com.bettercontent.pillagercampaigns.data
+package com.bettercontent.betterpillagercampaigns.data
 
-import com.bettercontent.pillagercampaigns.core.SurfaceCell
-import com.bettercontent.pillagercampaigns.system.SurfaceGridSampler
+import com.bettercontent.betterpillagercampaigns.core.SurfaceCell
+import com.bettercontent.betterpillagercampaigns.system.SurfaceGridSampler
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.nbt.ListTag
 import net.minecraft.nbt.Tag
@@ -76,7 +76,7 @@ class TerrainAtlasData private constructor(
     }
 
     companion object {
-        private const val KEY = "pillager_campaigns_terrain_atlas"
+        private const val KEY = "better_pillager_campaigns_terrain_atlas"
         private const val MAX_CHUNKS = 65_536
 
         fun get(server: MinecraftServer): TerrainAtlasData = server.overworld().dataStorage.computeIfAbsent(

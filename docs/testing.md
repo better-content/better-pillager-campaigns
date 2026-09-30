@@ -1,4 +1,4 @@
-# Pillager Campaigns Testing
+# Better Pillager Campaigns Testing
 
 `./gradlew verifyFast --no-daemon` runs the fixed 1,024-seed Core corpus, runner, Forge-facing unit tests, and the Core 90% line-coverage gate. `./gradlew verifyFull --no-daemon` adds headless Forge GameTests. `./gradlew verifyWorld --no-daemon` runs the Forge lane with the exact authored roster mods.
 
@@ -11,7 +11,7 @@
 
 The runner proves scheduling, fixed-point immaterial travel, arrival timing, per-player fairness, scaling bounds, roster constraints, durable effects, and terminal lifecycle. Strategic route tests cover open terrain, sealed walls, cliffs, and unknown cells. It is not a Minecraft combat or AI simulation.
 
-For the installed pack roster, run `/pillager_campaigns export_runtime_spec` after registries load and pass the exported `pillager_campaigns/exports/invasion-runtime-spec.json` to the runner.
+For the installed pack roster, run `/better_pillager_campaigns export_runtime_spec` after registries load and pass the exported `better_pillager_campaigns/exports/invasion-runtime-spec.json` to the runner.
 
 ## Required live validation
 
@@ -38,15 +38,15 @@ Forge GameTests create a real Survival dummy player at an explicit Y, exercise o
 Run `./gradlew runCampaignHarnessServer --no-daemon`, complete the standard first-run EULA acknowledgement if needed, and rerun it. In another shell run `./gradlew runCampaignHarnessClient --no-daemon`, join `127.0.0.1:25566`, and use the server console:
 
 ```text
-pillager_campaigns harness spawn scout immediate <player> 5
-pillager_campaigns harness protect <player>
-pillager_campaigns inspect <player>
-pillager_campaigns reset <player>
-pillager_campaigns harness spawn assault immediate <player> 5
-pillager_campaigns inspect <player>
-pillager_campaigns harness next_wave <player>
-pillager_campaigns harness next_wave <player>
-pillager_campaigns reset <player>
+better_pillager_campaigns harness spawn scout immediate <player> 5
+better_pillager_campaigns harness protect <player>
+better_pillager_campaigns inspect <player>
+better_pillager_campaigns reset <player>
+better_pillager_campaigns harness spawn assault immediate <player> 5
+better_pillager_campaigns inspect <player>
+better_pillager_campaigns harness next_wave <player>
+better_pillager_campaigns harness next_wave <player>
+better_pillager_campaigns reset <player>
 ```
 
 This is a manual bounded exercise, not a soak or timing gate. The immediate form bypasses only distant atlas travel. Use the `routed` form after exploring recorded terrain when the production strategic path is the subject of the check. The harness loads the authored optional roster but no Better Content modpack, retains its world between runs, and binds only to localhost. `./gradlew resetCampaignHarnessWorld` deletes only that generated world when a fresh one is explicitly desired.

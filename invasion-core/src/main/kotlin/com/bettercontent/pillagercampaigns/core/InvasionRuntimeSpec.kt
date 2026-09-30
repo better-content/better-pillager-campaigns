@@ -1,4 +1,4 @@
-package com.bettercontent.pillagercampaigns.core
+package com.bettercontent.betterpillagercampaigns.core
 
 import java.security.MessageDigest
 import kotlinx.serialization.Serializable

@@ -1,4 +1,4 @@
-package com.bettercontent.pillagercampaigns.api
+package com.bettercontent.betterpillagercampaigns.api
 
 import net.minecraft.server.level.ServerPlayer
 import net.minecraftforge.eventbus.api.Event

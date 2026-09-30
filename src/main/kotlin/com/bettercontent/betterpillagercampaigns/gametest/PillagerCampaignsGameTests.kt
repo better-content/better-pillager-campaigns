@@ -1,15 +1,15 @@
-package com.bettercontent.pillagercampaigns.gametest
+package com.bettercontent.betterpillagercampaigns.gametest
 
-import com.bettercontent.pillagercampaigns.PillagerCampaignsMod
-import com.bettercontent.pillagercampaigns.PillagerCampaignsEvents
-import com.bettercontent.pillagercampaigns.core.*
-import com.bettercontent.pillagercampaigns.system.InjuryCompat
-import com.bettercontent.pillagercampaigns.system.InvasionRoster
-import com.bettercontent.pillagercampaigns.system.InvasionRuntime
-import com.bettercontent.pillagercampaigns.system.CampaignTconLoadouts
-import com.bettercontent.pillagercampaigns.system.SurfaceGridSampler
-import com.bettercontent.pillagercampaigns.data.TerrainAtlasData
-import com.bettercontent.pillagercampaigns.data.PillagerWorldData
+import com.bettercontent.betterpillagercampaigns.PillagerCampaignsMod
+import com.bettercontent.betterpillagercampaigns.PillagerCampaignsEvents
+import com.bettercontent.betterpillagercampaigns.core.*
+import com.bettercontent.betterpillagercampaigns.system.InjuryCompat
+import com.bettercontent.betterpillagercampaigns.system.InvasionRoster
+import com.bettercontent.betterpillagercampaigns.system.InvasionRuntime
+import com.bettercontent.betterpillagercampaigns.system.CampaignTconLoadouts
+import com.bettercontent.betterpillagercampaigns.system.SurfaceGridSampler
+import com.bettercontent.betterpillagercampaigns.data.TerrainAtlasData
+import com.bettercontent.betterpillagercampaigns.data.PillagerWorldData
 import net.minecraft.core.BlockPos
 import net.minecraft.gametest.framework.GameTest
 import net.minecraft.gametest.framework.GameTestHelper

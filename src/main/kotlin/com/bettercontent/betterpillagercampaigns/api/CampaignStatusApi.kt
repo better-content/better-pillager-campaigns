@@ -1,7 +1,7 @@
-package com.bettercontent.pillagercampaigns.api
+package com.bettercontent.betterpillagercampaigns.api
 
-import com.bettercontent.pillagercampaigns.core.InvasionPhase
-import com.bettercontent.pillagercampaigns.data.PillagerWorldData
+import com.bettercontent.betterpillagercampaigns.core.InvasionPhase
+import com.bettercontent.betterpillagercampaigns.data.PillagerWorldData
 import net.minecraft.server.level.ServerPlayer
 
 /** A read-only, terrain-free view of the pressure directed at one player. */

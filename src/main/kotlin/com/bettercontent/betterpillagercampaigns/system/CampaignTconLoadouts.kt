@@ -1,4 +1,4 @@
-package com.bettercontent.pillagercampaigns.system
+package com.bettercontent.betterpillagercampaigns.system
 
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.util.RandomSource

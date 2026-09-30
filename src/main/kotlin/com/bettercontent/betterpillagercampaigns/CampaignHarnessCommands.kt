@@ -1,16 +1,16 @@
-package com.bettercontent.pillagercampaigns
+package com.bettercontent.betterpillagercampaigns
 
-import com.bettercontent.pillagercampaigns.core.BlockPoint
-import com.bettercontent.pillagercampaigns.core.DirectorCommand
-import com.bettercontent.pillagercampaigns.core.EncounterKind
-import com.bettercontent.pillagercampaigns.core.InvasionPhase
-import com.bettercontent.pillagercampaigns.core.MemberDefeatObservation
-import com.bettercontent.pillagercampaigns.core.StrategicFrontier
-import com.bettercontent.pillagercampaigns.core.StrategicRouteObservation
-import com.bettercontent.pillagercampaigns.data.PillagerWorldData
-import com.bettercontent.pillagercampaigns.data.TerrainAtlasData
-import com.bettercontent.pillagercampaigns.system.InvasionRuntime
-import com.bettercontent.pillagercampaigns.system.SurfaceGridSampler
+import com.bettercontent.betterpillagercampaigns.core.BlockPoint
+import com.bettercontent.betterpillagercampaigns.core.DirectorCommand
+import com.bettercontent.betterpillagercampaigns.core.EncounterKind
+import com.bettercontent.betterpillagercampaigns.core.InvasionPhase
+import com.bettercontent.betterpillagercampaigns.core.MemberDefeatObservation
+import com.bettercontent.betterpillagercampaigns.core.StrategicFrontier
+import com.bettercontent.betterpillagercampaigns.core.StrategicRouteObservation
+import com.bettercontent.betterpillagercampaigns.data.PillagerWorldData
+import com.bettercontent.betterpillagercampaigns.data.TerrainAtlasData
+import com.bettercontent.betterpillagercampaigns.system.InvasionRuntime
+import com.bettercontent.betterpillagercampaigns.system.SurfaceGridSampler
 import com.mojang.brigadier.Command
 import com.mojang.brigadier.arguments.IntegerArgumentType
 import com.mojang.brigadier.builder.LiteralArgumentBuilder
@@ -24,7 +24,7 @@ import net.minecraft.world.level.GameType
 import net.minecraft.world.level.Level
 
 object CampaignHarnessCommands {
-    private const val ENABLED_PROPERTY = "pillager_campaigns.harness"
+    private const val ENABLED_PROPERTY = "better_pillager_campaigns.harness"
 
     fun enabled(): Boolean = java.lang.Boolean.getBoolean(ENABLED_PROPERTY)
 
