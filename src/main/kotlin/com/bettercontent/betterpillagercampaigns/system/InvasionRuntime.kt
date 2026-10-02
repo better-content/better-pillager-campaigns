@@ -261,7 +261,10 @@ object InvasionRuntime {
     fun installCombatGoal(mob: Mob) {
         if (mob !is Pillager || !ModList.get().isLoaded("tconstruct")) return
         if (mob.goalSelector.availableGoals.none { it.goal is CampaignTconCrossbowGoal }) {
-            mob.goalSelector.addGoal(2, CampaignTconCrossbowGoal(mob))
+            // TConstruct's launcher extends ProjectileWeaponItem, so vanilla's
+            // CrossbowAttackGoal also claims MOVE/LOOK at priority 2. Give our
+            // compatible firing goal precedence or vanilla consumes the slot.
+            mob.goalSelector.addGoal(1, CampaignTconCrossbowGoal(mob))
         }
     }
 
