@@ -102,7 +102,10 @@ object PillagerCampaignsGameTests {
             scouts.forEach { mob ->
                 InvasionRuntime.maintainTarget(mob)
                 helper.assertTrue(mob.target === primary,
-                    "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must restore its campaign target after 200 ticks")
+                    "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must restore its campaign target after 200 ticks; " +
+                        "target=${mob.target?.let { ForgeRegistries.ENTITY_TYPES.getKey(it.type) }}, " +
+                        "now=${helper.level.gameTime}, lastHit=${mob.persistentData.getLong("PillagerCampaignsLastHitTick")}, " +
+                        "primaryAlive=${primary.isAlive}, primaryOnline=${helper.level.server.playerList.getPlayer(primary.uuid) === primary}")
                 mob.discard()
             }
             attacker.discard()
@@ -144,7 +147,13 @@ object PillagerCampaignsGameTests {
         }
         helper.runAfterDelay(110) {
             helper.assertTrue(moved, "TConstruct-equipped pillager must path toward its target")
-            helper.assertTrue(fired, "TConstruct-equipped pillager must fire a real arrow")
+            val runningGoals = pillager.goalSelector.availableGoals
+                .filter { it.isRunning }
+                .joinToString { it.goal.javaClass.simpleName }
+            helper.assertTrue(fired,
+                "TConstruct-equipped pillager must fire a real arrow; distance=${pillager.distanceTo(target)}, " +
+                    "lineOfSight=${pillager.sensing.hasLineOfSight(target)}, targetAlive=${target.isAlive}, " +
+                    "runningGoals=[$runningGoals], position=${pillager.blockPosition()}")
             pillager.discard()
             helper.succeed()
         }
