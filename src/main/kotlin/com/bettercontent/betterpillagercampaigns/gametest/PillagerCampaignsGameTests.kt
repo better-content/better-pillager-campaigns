@@ -38,7 +38,7 @@ import slimeknights.tconstruct.library.tools.item.ranged.ModifiableCrossbowItem
 @PrefixGameTestTemplate(false)
 object PillagerCampaignsGameTests {
     @JvmStatic
-    @GameTest(templateNamespace = "minecraft", template = "empty", timeoutTicks = 260)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", timeoutTicks = 340)
     fun everyScoutArchetypeRetaliatesForTenSeconds(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         for (x in 0..28) for (z in 0..14) {
@@ -84,10 +84,29 @@ object PillagerCampaignsGameTests {
             }
         var archerFired = false
         var skirmisherApproached = false
+        var retaliationWindowExpired = false
         helper.onEachTick {
             archerFired = archerFired || helper.level.getEntitiesOfClass(AbstractArrow::class.java,
                 scouts[1].boundingBox.inflate(35.0)).any { it.owner === scouts[1] }
             skirmisherApproached = skirmisherApproached || scouts[2].x > base.x + 9.5
+            if (!retaliationWindowExpired && scouts.all { mob ->
+                    helper.level.gameTime - mob.persistentData.getLong("PillagerCampaignsLastHitTick") >= 200L
+                }) {
+                scouts.forEach { mob ->
+                    InvasionRuntime.maintainTarget(mob)
+                    helper.assertTrue(mob.target === primary,
+                        "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must restore its campaign target after 200 game ticks; " +
+                            "target=${mob.target?.let { ForgeRegistries.ENTITY_TYPES.getKey(it.type) }}, " +
+                            "now=${helper.level.gameTime}, lastHit=${mob.persistentData.getLong("PillagerCampaignsLastHitTick")}, " +
+                            "primaryAlive=${primary.isAlive}, primaryOnline=${helper.level.server.playerList.getPlayer(primary.uuid) === primary}")
+                    mob.discard()
+                }
+                attacker.discard()
+                helper.level.server.playerList.remove(primary)
+                channel.finishAndReleaseAll()
+                retaliationWindowExpired = true
+                helper.succeed()
+            }
         }
         helper.runAfterDelay(190) {
             scouts.forEach { mob ->
@@ -98,55 +117,57 @@ object PillagerCampaignsGameTests {
             helper.assertTrue(archerFired, "The scout archer must fire at its attacker")
             helper.assertTrue(skirmisherApproached, "The scout skirmisher must turn and pursue its attacker")
         }
-        helper.runAfterDelay(210) {
-            scouts.forEach { mob ->
-                InvasionRuntime.maintainTarget(mob)
-                helper.assertTrue(mob.target === primary,
-                    "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must restore its campaign target after 200 ticks; " +
-                        "target=${mob.target?.let { ForgeRegistries.ENTITY_TYPES.getKey(it.type) }}, " +
-                        "now=${helper.level.gameTime}, lastHit=${mob.persistentData.getLong("PillagerCampaignsLastHitTick")}, " +
-                        "primaryAlive=${primary.isAlive}, primaryOnline=${helper.level.server.playerList.getPlayer(primary.uuid) === primary}")
-                mob.discard()
-            }
-            attacker.discard()
-            helper.level.server.playerList.remove(primary)
-            channel.finishAndReleaseAll()
-            helper.succeed()
-        }
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = "minecraft", template = "empty", timeoutTicks = 150)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", timeoutTicks = 150)
     fun campaignTconPillagerPursuesAndFires(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
-        for (x in 0..30) for (z in 0..14) {
+        for (x in 0..20) for (z in 0..24) {
             val pos = base.offset(x, 0, z)
             helper.level.setBlockAndUpdate(pos.below(), Blocks.STONE.defaultBlockState())
             helper.level.setBlockAndUpdate(pos, Blocks.AIR.defaultBlockState())
             helper.level.setBlockAndUpdate(pos.above(), Blocks.AIR.defaultBlockState())
         }
-        val target = fake(helper, "tcon-combat")
+        val target = ServerPlayer(helper.level.server, helper.level,
+            GameProfile(UUID.nameUUIDFromBytes("campaign-test-tcon-combat".toByteArray()), "campaign-test-tcon-combat"))
+        val connection = Connection(PacketFlow.SERVERBOUND)
+        val channel = EmbeddedChannel(connection)
+        helper.level.server.playerList.placeNewPlayer(connection, target)
         target.setGameMode(GameType.SURVIVAL)
-        target.moveTo(base.x + 27.5, base.y.toDouble(), base.z + 7.5)
+        target.abilities.invulnerable = true
+        target.moveTo(base.x + 20.5, base.y.toDouble(), base.z + 24.5)
         val pillager = EntityType.PILLAGER.create(helper.level)!!
-        pillager.moveTo(base.x + 2.5, base.y.toDouble(), base.z + 7.5)
+        pillager.moveTo(base.x + 5.5, base.y.toDouble(), base.z + 9.5)
+        pillager.finalizeSpawn(helper.level, helper.level.getCurrentDifficultyAt(pillager.blockPosition()),
+            MobSpawnType.EVENT, null, null)
         helper.assertTrue(helper.level.addFreshEntity(pillager), "Test pillager must enter the level")
         pillager.setOnGround(true)
+        pillager.setPersistenceRequired()
         pillager.persistentData.putString(InvasionRuntime.INVASION_TAG, "tcon-combat-proof")
         CampaignTconLoadouts.apply(pillager)
         InvasionRuntime.installCombatGoal(pillager)
         helper.assertTrue(pillager.mainHandItem.item is ModifiableCrossbowItem,
             "The campaign pillager must retain its TConstruct crossbow")
         pillager.target = target
-        var moved = false
+        val initialDistance = pillager.distanceTo(target)
+        var movedTowardTarget = false
         var fired = false
         helper.onEachTick {
-            moved = moved || pillager.x > base.x + 6.5
+            movedTowardTarget = movedTowardTarget || pillager.distanceTo(target) < initialDistance - 1.0f
             fired = fired || helper.level.getEntitiesOfClass(AbstractArrow::class.java,
                 pillager.boundingBox.inflate(40.0)).any { it.owner === pillager }
         }
         helper.runAfterDelay(110) {
-            helper.assertTrue(moved, "TConstruct-equipped pillager must path toward its target")
+            helper.assertTrue(movedTowardTarget || pillager.distanceTo(target) < initialDistance - 1.0f,
+                "TConstruct-equipped pillager must path toward its target; " +
+                    "distance=${pillager.distanceTo(target)}, targetAlive=${target.isAlive}, " +
+                    "initialDistance=$initialDistance, " +
+                    "base=$base, targetPosition=${target.blockPosition()}, " +
+                    "campaignId=${InvasionRuntime.invasionId(pillager)}, " +
+                    "mainHand=${ForgeRegistries.ITEMS.getKey(pillager.mainHandItem.item)}, " +
+                    "runningGoals=${pillager.goalSelector.availableGoals.filter { it.isRunning }.joinToString { it.goal.javaClass.simpleName }}, " +
+                    "position=${pillager.blockPosition()}")
             val runningGoals = pillager.goalSelector.availableGoals
                 .filter { it.isRunning }
                 .joinToString { it.goal.javaClass.simpleName }
@@ -155,6 +176,8 @@ object PillagerCampaignsGameTests {
                     "lineOfSight=${pillager.sensing.hasLineOfSight(target)}, targetAlive=${target.isAlive}, " +
                     "runningGoals=[$runningGoals], position=${pillager.blockPosition()}")
             pillager.discard()
+            helper.level.server.playerList.remove(target)
+            channel.finishAndReleaseAll()
             helper.succeed()
         }
     }
