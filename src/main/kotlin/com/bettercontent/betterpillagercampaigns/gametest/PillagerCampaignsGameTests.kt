@@ -38,7 +38,7 @@ import slimeknights.tconstruct.library.tools.item.ranged.ModifiableCrossbowItem
 @PrefixGameTestTemplate(false)
 object PillagerCampaignsGameTests {
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", timeoutTicks = 340)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "scout_retaliation", timeoutTicks = 340)
     fun everyScoutArchetypeRetaliatesForTenSeconds(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         for (x in 0..28) for (z in 0..14) {
