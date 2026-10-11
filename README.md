@@ -1,5 +1,11 @@
 # Better Pillager Campaigns
 
+## Scope and authority
+
+This repository owns its mod-specific behavior and authoring inputs. Read [local instructions](AGENTS.md)
+and the [shared documentation/policy index](../../better-content-modpack/docs/README.md).
+
+
 Better Pillager Campaigns is a server-side Minecraft Forge mod for Minecraft 1.20.1. It supplies frequent overland scout pressure and sparse, warned pillager assaults for Survival players.
 
 Each player has independent eligible-time clocks: scouts arrive every 6–12 minutes with 3–6 members and withdraw after two active minutes; assaults arrive every 60–120 minutes, warn two surface minutes before arrival, then deliver three progress-gated waves of 16–24 members for one player. Nearby players within 64 blocks share one scaled encounter, capped at 48 members per wave. Groups dispatch early from deterministic virtual origins 512–768 blocks away so those windows remain arrival windows, then advance immaterially at 1.6 blocks/second for scouts or 1 block/second for assaults. This strategic leg never loads or requires distant chunks.
