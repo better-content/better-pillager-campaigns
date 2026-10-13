@@ -543,7 +543,9 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 600)
+    // Other same-batch scenarios materialize hundreds of members synchronously. Let the native
+    // 20-tick recent-spawn window expire before creating this independent full-health target.
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 600, setupTicks = 21)
     fun minimumIntensityAssaultDefeatsFullHealthSurvivalPlayer(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
@@ -579,7 +581,9 @@ object PillagerCampaignsGameTests {
         }
         val attackers = InvasionRuntime.liveMembers(helper.level.server, invasionId)
         helper.assertTrue(attackers.isNotEmpty() && attackers.all { it.target === target },
-            "The rate-limited authored assault packet must spawn targeting the Survival player")
+            "The rate-limited authored assault packet must spawn targeting the Survival player; " +
+                "attackerCount=${attackers.size}, rateCounter=${InvasionRuntime.spawnsLastSecond(helper.level.server.overworld().gameTime)}, " +
+                "actualTargetUUIDs=${attackers.map { it.target?.uuid }}, expectedTargetUUID=${target.uuid}")
         PillagerCampaignsMod.LOGGER.info(
             "Lethality attacker loadout: {}",
             attackers.joinToString { mob ->
