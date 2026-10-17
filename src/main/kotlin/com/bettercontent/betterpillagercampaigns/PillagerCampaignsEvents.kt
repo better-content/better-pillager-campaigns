@@ -7,6 +7,8 @@ import com.bettercontent.betterpillagercampaigns.system.InvasionRoster
 import com.bettercontent.betterpillagercampaigns.system.InvasionRuntime
 import com.bettercontent.betterpillagercampaigns.system.SurfaceGridSampler
 import com.bettercontent.betterpillagercampaigns.system.InjuryCompat
+import com.bettercontent.betterpillagercampaigns.system.CampaignHuntGoal
+import net.minecraft.world.entity.projectile.Projectile
 import com.mojang.brigadier.Command
 import com.mojang.brigadier.arguments.StringArgumentType
 import kotlinx.serialization.encodeToString
@@ -206,6 +208,7 @@ object PillagerCampaignsEvents {
 
     @SubscribeEvent
     fun onLivingHurt(event: LivingHurtEvent) {
+        (event.source.entity as? Mob)?.takeIf { it.target === event.entity }?.let(CampaignHuntGoal::recordAttack)
         InvasionRuntime.invasionId(event.entity)?.let(combatInvasions::add)
         InvasionRuntime.invasionId(event.source.entity)?.let(combatInvasions::add)
         (event.entity as? Mob)?.takeIf { InvasionRuntime.invasionId(it) != null }
@@ -219,6 +222,8 @@ object PillagerCampaignsEvents {
 
     @SubscribeEvent
     fun onEntityJoin(event: EntityJoinLevelEvent) {
+        if (event.level.isClientSide) return
+        ((event.entity as? Projectile)?.owner as? Mob)?.let(CampaignHuntGoal::recordAttack)
         val mob = event.entity as? Mob ?: return
         val invasionId = InvasionRuntime.invasionId(mob) ?: return
         val server = event.level.server ?: return

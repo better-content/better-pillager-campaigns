@@ -13,8 +13,10 @@ import kotlin.math.sqrt
 
 /** Campaign-only replacement for vanilla's crossbow goal, whose item check excludes TConstruct tools. */
 internal class CampaignTconCrossbowGoal(private val pillager: Pillager) : Goal() {
-    private var repathTicks = 0
+    private val navigation = CampaignHuntNavigation(pillager)
+    private var visibleTicks = 0
     private var shotTicks = 0
+    private var targetId: java.util.UUID? = null
 
     init {
         flags = EnumSet.of(Flag.MOVE, Flag.LOOK)
@@ -25,17 +27,23 @@ internal class CampaignTconCrossbowGoal(private val pillager: Pillager) : Goal()
     override fun canContinueToUse(): Boolean = valid()
 
     private fun valid(): Boolean =
-        InvasionRuntime.invasionId(pillager) != null && pillager.target?.isAlive == true &&
+        InvasionRuntime.invasionId(pillager) != null &&
+            pillager.target?.let { it.isAlive && it.level() === pillager.level() } == true &&
             pillager.mainHandItem.item is ModifiableCrossbowItem
 
     override fun start() {
-        repathTicks = 0
+        navigation.reset()
+        visibleTicks = 0
+        targetId = null
         shotTicks = 0
         pillager.isAggressive = true
     }
 
     override fun stop() {
         pillager.navigation.stop()
+        navigation.reset()
+        visibleTicks = 0
+        targetId = null
         pillager.isAggressive = false
     }
 
@@ -43,18 +51,21 @@ internal class CampaignTconCrossbowGoal(private val pillager: Pillager) : Goal()
 
     override fun tick() {
         val target = pillager.target ?: return
+        if (targetId != target.uuid) {
+            targetId = target.uuid
+            visibleTicks = 0
+            navigation.reset()
+        }
         val visible = pillager.sensing.hasLineOfSight(target)
+        visibleTicks = if (visible) (visibleTicks + 1).coerceAtMost(5) else 0
         val distanceSquared = pillager.distanceToSqr(target)
         pillager.lookControl.setLookAt(target, 30f, 30f)
 
-        if (!visible || distanceSquared > 16.0 * 16.0) {
-            if (--repathTicks <= 0) {
-                pillager.navigation.moveTo(target, 1.0)
-                repathTicks = 20
-            }
+        if (visibleTicks < 5 || distanceSquared > 16.0 * 16.0) {
+            navigation.tick(target)
         } else {
             pillager.navigation.stop()
-            repathTicks = 0
+            navigation.reset()
             if (--shotTicks <= 0) {
                 aimAt(target.eyeY - pillager.eyeY, target.x - pillager.x, target.z - pillager.z)
                 val arrow = ItemStack(Items.ARROW).save(CompoundTag())

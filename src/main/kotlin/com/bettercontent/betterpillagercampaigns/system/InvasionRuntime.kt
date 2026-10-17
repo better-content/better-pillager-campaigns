@@ -259,6 +259,10 @@ object InvasionRuntime {
     }
 
     fun installCombatGoal(mob: Mob) {
+        if (mob.goalSelector.availableGoals.none { it.goal is CampaignHuntGoal }) {
+            // Dormant while native combat makes progress; temporary MOVE ownership on a stall.
+            mob.goalSelector.addGoal(0, CampaignHuntGoal(mob))
+        }
         if (mob !is Pillager || !ModList.get().isLoaded("tconstruct")) return
         if (mob.goalSelector.availableGoals.none { it.goal is CampaignTconCrossbowGoal }) {
             // TConstruct's launcher extends ProjectileWeaponItem, so vanilla's

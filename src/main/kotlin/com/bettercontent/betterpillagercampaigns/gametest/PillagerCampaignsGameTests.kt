@@ -38,7 +38,7 @@ import slimeknights.tconstruct.library.tools.item.ranged.ModifiableCrossbowItem
 @PrefixGameTestTemplate(false)
 object PillagerCampaignsGameTests {
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 340)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_retaliation", timeoutTicks = 340)
     fun everyScoutArchetypeRetaliatesForTenSeconds(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         for (x in 0..28) for (z in 0..14) {
@@ -124,7 +124,7 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 150)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_crossbow", timeoutTicks = 150)
     fun campaignTconPillagerPursuesAndFires(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         for (x in 0..20) for (z in 0..24) {
@@ -187,7 +187,7 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 80)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_policy", timeoutTicks = 80)
     fun runtimeRosterAndDummyPlayerAtYDriveProductionPolicy(helper: GameTestHelper) {
         val spec = InvasionRoster.runtimeSpec()
         spec.requireValid()
@@ -214,7 +214,7 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 100)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_collision", timeoutTicks = 100)
     fun loadedSurfaceGateCollisionFluidAndReachabilityAreExact(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
@@ -268,7 +268,7 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 100)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_spawn", timeoutTicks = 100)
     fun eventAuthoredSpawnGetsTargetProvenanceAndCleansUp(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
@@ -305,7 +305,7 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 100)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_singlepath", timeoutTicks = 100)
     fun campaignApproachUsesOneLeadPathThenLeavesNavigationToVanilla(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
@@ -347,7 +347,7 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 120)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_sealed", timeoutTicks = 120)
     fun sealedDefenseMaterializesOutsideAndDoesNotTeleportInside(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
@@ -378,7 +378,7 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 160)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_retry", timeoutTicks = 160)
     fun failedOpenApproachRetriesAtReachableAnchorWithoutCrossingDefense(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
@@ -438,7 +438,7 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 200)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_schedule", timeoutTicks = 200)
     fun twelveScheduledAssaultsCompleteThroughRealForgeMaterialization(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
@@ -545,7 +545,7 @@ object PillagerCampaignsGameTests {
     @JvmStatic
     // Other same-batch scenarios materialize hundreds of members synchronously. Let the native
     // 20-tick recent-spawn window expire before creating this independent full-health target.
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 600, setupTicks = 21)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_lethality", timeoutTicks = 600, setupTicks = 21)
     fun minimumIntensityAssaultDefeatsFullHealthSurvivalPlayer(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
@@ -643,7 +643,7 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_scenarios", timeoutTicks = 300)
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_unload", timeoutTicks = 300)
     fun terrainAtlasSurvivesActualChunkUnloadWithoutReloadingIt(helper: GameTestHelper) {
         val level = helper.level
         val origin = helper.absolutePos(BlockPos.ZERO)
