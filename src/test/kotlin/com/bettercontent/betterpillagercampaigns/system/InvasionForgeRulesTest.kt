@@ -85,6 +85,20 @@ class InvasionForgeRulesTest {
         assertTrue(migrated.invasion == null && migrated.joinedInvasionId == null)
     }
 
+    @Test fun `schema four migration preserves clocks without inventing regional presence`() {
+        val old = DirectorSnapshot(schemaVersion = 4, worldSeed = 43,
+            tracks = linkedMapOf("player" to PlayerPressureTrack("player", eligibleTicks = 999_999)))
+        val tag = CompoundTag().also {
+            it.putInt("schema", 4)
+            it.putString("snapshot", Json { encodeDefaults = false }.encodeToString(old))
+        }
+        val data = PillagerWorldData.load(tag, 43)
+        assertEquals(5, data.snapshot().schemaVersion)
+        assertEquals(999_999, data.snapshot().tracks.getValue("player").eligibleTicks)
+        assertTrue(data.snapshot().regionalPresence.isEmpty())
+        assertTrue(!data.regionFamiliar("player", BlockPoint("minecraft:overworld", 0, 64, 0)))
+    }
+
     @Test fun `schema three migration retains campaign roster but resets retired distant route`() {
         val invasion = InvasionState("legacy", EncounterKind.ASSAULT, "player", listOf("player"), 2,
             listOf(WavePlan(0, 6, listOf(MemberPlan("member", "minecraft:pillager", 2)))),

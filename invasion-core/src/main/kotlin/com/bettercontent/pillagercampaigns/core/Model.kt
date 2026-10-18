@@ -100,6 +100,8 @@ data class PlayerObservation(
     val physicallyAvailable: Boolean,
     val position: BlockPoint? = null,
     val lowHealth: Boolean = false,
+    // Synthetic callers explicitly describe familiarity; native observations consult saved presence.
+    val regionFamiliar: Boolean = true,
 )
 
 @Serializable enum class EncounterKind { SCOUT, ASSAULT }
@@ -182,8 +184,9 @@ data class DirectorSnapshot(
     var fairServiceCursor: Int = 0,
     val tracks: MutableMap<String, PlayerPressureTrack> = linkedMapOf(),
     val pendingEffects: MutableMap<String, DirectorEffect> = linkedMapOf(),
+    val regionalPresence: MutableMap<String, RegionalPresence> = linkedMapOf(),
 ) {
-    companion object { const val CURRENT_SCHEMA_VERSION: Int = 4 }
+    companion object { const val CURRENT_SCHEMA_VERSION: Int = 5 }
 }
 
 @Serializable enum class EffectKind { WARN, MATERIALIZE, RETIRE }

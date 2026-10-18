@@ -5,8 +5,8 @@
 ## Deterministic Core gate
 
 ```sh
-./gradlew -q :runner:run --args='example' > /tmp/invasion-runtime-spec.json
-./gradlew -q :runner:run --args='mvp /tmp/invasion-runtime-spec.json build/invasion-readiness'
+./gradlew -q :runner:run --args='example' > build/invasion-runtime-spec.json
+./gradlew -q :runner:run --args='mvp build/invasion-runtime-spec.json build/invasion-readiness'
 ```
 
 The runner proves scheduling, fixed-point immaterial travel, arrival timing, per-player fairness, scaling bounds, roster constraints, durable effects, and terminal lifecycle. Strategic route tests cover open terrain, sealed walls, cliffs, and unknown cells. It is not a Minecraft combat or AI simulation.
@@ -15,7 +15,9 @@ For the installed pack roster, run `/better_pillager_campaigns export_runtime_sp
 
 ## Required live validation
 
-- Use Survival in the Overworld with view and simulation distance four.
+- Use Survival in the Overworld with view and simulation distance four. Establish 30 minutes of living online presence locally before expecting fresh campaigns or using force/harness spawning.
+- Verify new players and new dimensions have no fabricated regional history, 30 accumulated minutes establish the core ~128-block area, influence fades to ~256 blocks, and saving/reopening retains earned presence without adding offline time. Creative, Spectator and dead ticks must not earn presence.
+- Travel to unfamiliar ground during approach and between packets/waves: fresh interception/spawning waits, including participant and fallback choices, while already spawned mobs may pursue normally. Return to familiar ground and verify progress resumes without resetting global eligible-time clocks.
 - Verify silent scouts arrive within 7,200–14,400 eligible ticks and contain 3–6 ranged/line recruits.
 - Hit a retreating scout and verify it resumes attacking for ten seconds, then returns to its ordinary campaign target.
 - Verify TConstruct-equipped campaign pillagers pursue reachable players and fire arrows.

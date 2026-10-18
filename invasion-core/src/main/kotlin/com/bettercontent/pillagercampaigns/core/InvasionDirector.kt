@@ -40,8 +40,15 @@ class InvasionDirector private constructor(
 
     fun snapshot(): DirectorSnapshot = copy(state)
 
+    fun recordPresence(playerId: String, position: BlockPoint, ticks: Long = 1) {
+        state.regionalPresence.getOrPut(playerId) { RegionalPresence() }.record(position, ticks)
+    }
+
+    fun regionFamiliar(playerId: String, position: BlockPoint): Boolean =
+        state.regionalPresence[playerId]?.familiar(position) == true
+
     private fun beginDueEncounters(players: Map<String, PlayerObservation>, events: MutableList<DirectorEvent>) {
-        val available = players.values.filter { it.eligible && it.surfaceEligible && it.physicallyAvailable }
+        val available = players.values.filter { it.eligible && it.surfaceEligible && it.physicallyAvailable && it.regionFamiliar }
         fun candidates(kind: EncounterKind) = available.filter { player ->
             val track = track(player.playerId)
             track.invasion == null && track.joinedInvasionId == null &&
@@ -110,7 +117,11 @@ class InvasionDirector private constructor(
     private fun advanceExisting(players: Map<String, PlayerObservation>, elapsed: Long, events: MutableList<DirectorEvent>) {
         primaryTracks().forEach { track ->
             val invasion = track.invasion ?: return@forEach
-            val target = chooseTarget(invasion, players)
+            val target = chooseTarget(invasion, players, requireFamiliar = invasion.phase != InvasionPhase.ACTIVE)
+            // Unfamiliar ground pauses virtual interception, not already-spawned pursuit.
+            if (target == null && invasion.participantPlayerIds.any { id ->
+                    players[id]?.let { it.eligible && it.physicallyAvailable && !it.regionFamiliar } == true
+                }) return@forEach
             val available = target?.let { it.eligible && it.physicallyAvailable } == true
             invasion.targetUnavailableTicks = if (available) 0L else invasion.targetUnavailableTicks + elapsed
             if (invasion.kind == EncounterKind.SCOUT &&
@@ -121,7 +132,7 @@ class InvasionDirector private constructor(
             // Assaults retain their hostile intent while no participant can be pursued.
             // Stop all per-encounter clocks and route work until a target is available again.
             if (invasion.kind == EncounterKind.ASSAULT && !available) return@forEach
-            if (target?.position != null && invasion.routeTarget?.let { moved(it, target.position) } == true) {
+            if (target?.regionFamiliar == true && target.position != null && invasion.routeTarget?.let { moved(it, target.position) } == true) {
                 val previousTarget = invasion.routeTarget
                 invasion.routeTarget = target.position
                 invasion.anchor = null
@@ -176,7 +187,7 @@ class InvasionDirector private constructor(
                     val hardLimit = if (invasion.kind == EncounterKind.SCOUT) spec.rules.scoutActiveTicks else spec.rules.assaultActiveTicks
                     if (invasion.activeTicks >= hardLimit || state.tick - invasion.lastCombatTick >= spec.rules.activeIdleTicks) {
                         requestRetire(track, InvasionOutcome.RETIRED, events)
-                    } else if (invasion.kind == EncounterKind.ASSAULT) advanceWave(invasion, events)
+                    } else if (invasion.kind == EncounterKind.ASSAULT && target?.regionFamiliar == true) advanceWave(invasion, events)
                 }
                 InvasionPhase.RETIRING -> Unit
             }
@@ -224,7 +235,7 @@ class InvasionDirector private constructor(
         if (capacity == 0) return
         val ready = primaryTracks().mapNotNull(PlayerPressureTrack::invasion).filter { invasion ->
             invasion.phase in setOf(InvasionPhase.READY_TO_MATERIALIZE, InvasionPhase.ACTIVE) &&
-                chooseTarget(invasion, players)?.surfaceEligible == true &&
+                chooseTarget(invasion, players)?.let { it.surfaceEligible && it.regionFamiliar } == true &&
                 invasion.anchor != null && state.tick >= invasion.nextPacketTick &&
                 state.pendingEffects.values.none { it.invasionId == invasion.invasionId && it.kind == EffectKind.MATERIALIZE } &&
                 invasion.waves[invasion.currentWave].queuedMembers < invasion.waves[invasion.currentWave].members.size
@@ -514,10 +525,12 @@ class InvasionDirector private constructor(
     private fun participantInAssault(id: String) = primaryTracks().any {
         it.invasion?.kind == EncounterKind.ASSAULT && id in it.invasion!!.participantPlayerIds
     }
-    private fun chooseTarget(invasion: InvasionState, players: Map<String, PlayerObservation>): PlayerObservation? =
-        players[invasion.targetPlayerId]?.takeIf { it.eligible && it.physicallyAvailable }
+    private fun chooseTarget(
+        invasion: InvasionState, players: Map<String, PlayerObservation>, requireFamiliar: Boolean = true,
+    ): PlayerObservation? =
+        players[invasion.targetPlayerId]?.takeIf { it.eligible && it.physicallyAvailable && (!requireFamiliar || it.regionFamiliar) }
             ?: invasion.participantPlayerIds.asSequence().mapNotNull(players::get)
-                .filter { it.eligible && it.physicallyAvailable }
+                .filter { it.eligible && it.physicallyAvailable && (!requireFamiliar || it.regionFamiliar) }
                 .minWithOrNull(compareBy<PlayerObservation> { distanceSquared(it.position, invasion.routeTarget) }
                     .thenBy { it.playerId })
 

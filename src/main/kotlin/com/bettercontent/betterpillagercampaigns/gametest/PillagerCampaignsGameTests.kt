@@ -37,6 +37,61 @@ import slimeknights.tconstruct.library.tools.item.ranged.ModifiableCrossbowItem
 @GameTestHolder(PillagerCampaignsMod.MOD_ID)
 @PrefixGameTestTemplate(false)
 object PillagerCampaignsGameTests {
+    private fun regionalPresenceSurvivesNativeSaveAndBlocksFreshPackets(helper: GameTestHelper) {
+        val base = helper.absolutePos(BlockPos(1, 2, 1))
+        buildSurface(helper, base)
+        val player = fake(helper, "presence")
+        player.setGameMode(GameType.SURVIVAL)
+        player.moveTo(base.x + 11.5, base.y.toDouble(), base.z + 7.5)
+        val data = PillagerWorldData.get(helper.level.server)
+        val id = player.uuid.toString()
+        val known = data.snapshot()
+        // Exercise a legitimately large bounded ledger through actual NBT binary encoding.
+        repeat(1_023) { known.regionalPresence.getValue(id).record(
+            BlockPoint("test:remote_dimension", it * 1_024, 64, 0), 20) }
+        val unknown = data.snapshot().also { it.regionalPresence.remove(id) }
+        data.restoreSnapshot(unknown, InvasionRoster.runtimeSpec())
+        val anchor = base.offset(3, 0, 7)
+        val effect = DirectorEffect("presence-first", EffectKind.MATERIALIZE, id, "presence-invasion",
+            EncounterKind.ASSAULT, 0, BlockPoint("minecraft:overworld", anchor.x, anchor.y, anchor.z),
+            listOf(MemberPlan("presence-member", "minecraft:pillager", 2)))
+        helper.assertTrue(!InvasionRuntime.materializeAgainst(helper.level, player, effect),
+            "Unknown regional history must reject fresh packets before spawning")
+        data.restoreSnapshot(known, InvasionRoster.runtimeSpec())
+        val bytes = java.io.ByteArrayOutputStream()
+        net.minecraft.nbt.NbtIo.write(data.save(net.minecraft.nbt.CompoundTag()), java.io.DataOutputStream(bytes))
+        helper.assertTrue(bytes.size() > 65_535, "Persistence fixture must exceed the NBT string limit")
+        val savedTag = net.minecraft.nbt.NbtIo.read(java.io.DataInputStream(java.io.ByteArrayInputStream(bytes.toByteArray())))
+        val reloaded = PillagerWorldData.load(savedTag, helper.level.seed)
+        helper.assertTrue(reloaded.regionFamiliar(id, BlockPoint("minecraft:overworld", player.blockX, player.blockY, player.blockZ)),
+            "Native NBT save/reload must retain regional history")
+        helper.assertTrue(InvasionRuntime.materializeAgainst(helper.level, player, effect), "Established presence permits a packet")
+        val mob = InvasionRuntime.liveMembers(helper.level.server, effect.invasionId).single()
+        data.restoreSnapshot(unknown, InvasionRoster.runtimeSpec())
+        val next = effect.copy(effectId = "presence-next", waveIndex = 1,
+            members = listOf(MemberPlan("presence-next-member", "minecraft:pillager", 2, 1)))
+        helper.assertTrue(!InvasionRuntime.materializeAgainst(helper.level, player, next), "Later waves must recheck presence")
+        helper.assertTrue(!InvasionRuntime.freshTargetEligible(player), "Fallback target must not bypass familiarity")
+        mob.discard()
+        data.restoreSnapshot(known, InvasionRoster.runtimeSpec())
+        val sequence = data.snapshot().regionalPresence.getValue(id).sequence
+        player.setGameMode(GameType.CREATIVE)
+        helper.assertTrue(!InvasionRuntime.freshTargetEligible(player), "Creative fallback must be rejected even at home")
+        PillagerCampaignsEvents.recordOnlinePresence(player)
+        player.setGameMode(GameType.SPECTATOR)
+        PillagerCampaignsEvents.recordOnlinePresence(player)
+        helper.assertTrue(data.snapshot().regionalPresence.getValue(id).sequence == sequence,
+            "Creative and Spectator ticks cannot accumulate presence")
+        player.setGameMode(GameType.SURVIVAL)
+        PillagerCampaignsEvents.recordOnlinePresence(player)
+        helper.assertTrue(data.snapshot().regionalPresence.getValue(id).sequence == sequence + 1,
+            "A living Survival observation adds only its actual one tick")
+        player.health = 0f
+        PillagerCampaignsEvents.recordOnlinePresence(player)
+        helper.assertTrue(data.snapshot().regionalPresence.getValue(id).sequence == sequence + 1,
+            "Dead players cannot accumulate presence")
+    }
+
     @JvmStatic
     @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_retaliation", timeoutTicks = 340)
     fun everyScoutArchetypeRetaliatesForTenSeconds(helper: GameTestHelper) {
@@ -270,6 +325,7 @@ object PillagerCampaignsGameTests {
     @JvmStatic
     @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_spawn", timeoutTicks = 100)
     fun eventAuthoredSpawnGetsTargetProvenanceAndCleansUp(helper: GameTestHelper) {
+        regionalPresenceSurvivesNativeSaveAndBlocksFreshPackets(helper)
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
         val fake = fake(helper, "spawn")
@@ -562,6 +618,7 @@ object PillagerCampaignsGameTests {
         val runtime = InvasionRoster.runtimeSpec()
         val playerId = target.uuid.toString()
         val targetPoint = BlockPoint("minecraft:overworld", target.blockX, target.blockY, target.blockZ)
+        establishPresence(target, targetPoint)
         val player = PlayerObservation(playerId, true, true, true, targetPoint)
         PillagerCampaignsEvents.advance(helper.level.server, 0,
             commands = listOf(DirectorCommand.Force(playerId, EncounterKind.ASSAULT,
@@ -681,5 +738,18 @@ object PillagerCampaignsGameTests {
     }
 
     private fun fake(helper: GameTestHelper, suffix: String) =
-        FakePlayer(helper.level, GameProfile(UUID.nameUUIDFromBytes("campaign-test-$suffix".toByteArray()), "campaign-test-$suffix"))
+        FakePlayer(helper.level, GameProfile(UUID.nameUUIDFromBytes("campaign-test-$suffix".toByteArray()), "campaign-test-$suffix")).also {
+            // Existing materialization fixtures deliberately model an established home region.
+            val base = helper.absolutePos(BlockPos(1, 2, 1))
+            establishPresence(it, BlockPoint("minecraft:overworld", base.x, base.y, base.z))
+        }
+
+    private fun establishPresence(player: ServerPlayer, position: BlockPoint) {
+        val presence = RegionalPresence()
+        repeat(1_800) { presence.record(position, 20) }
+        val data = PillagerWorldData.get(player.serverLevel().server)
+        val snapshot = data.snapshot()
+        snapshot.regionalPresence[player.uuid.toString()] = presence
+        data.restoreSnapshot(snapshot, InvasionRoster.runtimeSpec())
+    }
 }

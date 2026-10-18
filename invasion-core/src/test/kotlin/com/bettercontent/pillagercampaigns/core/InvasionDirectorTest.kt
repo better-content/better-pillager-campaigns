@@ -610,6 +610,63 @@ class InvasionDirectorTest {
         return Timeline(scoutDue, assaultDue, scouts, assaults)
     }
 
+    @Test fun `unfamiliar dispatch and approach wait without consuming global eligible progression`() {
+        val engine = InvasionDirector.create(1, fixedSpec())
+        val stranger = observation("player").copy(regionFamiliar = false)
+        engine.transition(DirectorFrame(10_000, listOf(stranger)))
+        assertEquals(10_000, track(engine).eligibleTicks)
+        assertNull(track(engine).invasion)
+        assertTrue(engine.snapshot().regionalPresence.isEmpty()) // elapsed frame is not presence
+        engine.transition(DirectorFrame(0, listOf(stranger.copy(regionFamiliar = true))))
+        val initial = track(engine).invasion!!
+        engine.transition(DirectorFrame(10_000, listOf(stranger)))
+        val paused = track(engine).invasion!!
+        assertEquals(initial.strategicTravelMilliBlocks, paused.strategicTravelMilliBlocks)
+        assertEquals(initial.localApproachTicks, paused.localApproachTicks)
+        assertEquals(initial.targetUnavailableTicks, paused.targetUnavailableTicks)
+        assertEquals(20_000, track(engine).eligibleTicks)
+        engine.transition(DirectorFrame(1, listOf(stranger.copy(regionFamiliar = true))))
+        assertTrue(track(engine).invasion!!.localApproachTicks > paused.localApproachTicks)
+    }
+
+    @Test fun `active enemies keep lifetime but fresh waves and participant grouping require familiar ground`() {
+        val engine = InvasionDirector.create(1, fixedSpec())
+        val known = observation("player")
+        val unknown = observation("other").copy(regionFamiliar = false)
+        engine.transition(DirectorFrame(0, listOf(known, unknown), commands = listOf(
+            DirectorCommand.Force("player", EncounterKind.ASSAULT))))
+        val snapshot = engine.snapshot()
+        val invasion = snapshot.tracks.getValue("player").invasion!!
+        assertEquals(listOf("player"), invasion.participantPlayerIds)
+        invasion.phase = InvasionPhase.ACTIVE
+        invasion.anchor = known.position
+        val wave = invasion.waves[0]
+        wave.materializedMembers = wave.members.size
+        wave.queuedMembers = wave.members.size
+        wave.startedTick = snapshot.tick
+        invasion.defeatedMemberIds.addAll(wave.members.take((wave.members.size + 1) / 2).map { it.memberId })
+        val restored = InvasionDirector.restore(snapshot, fixedSpec())
+        val transition = restored.transition(DirectorFrame(10, listOf(known.copy(regionFamiliar = false))))
+        assertEquals(0, track(restored).invasion!!.currentWave)
+        assertEquals(10, track(restored).invasion!!.activeTicks)
+        assertEquals(InvasionPhase.ACTIVE, track(restored).invasion!!.phase)
+        assertTrue(transition.effects.none { it.kind == EffectKind.MATERIALIZE })
+        restored.transition(DirectorFrame(0, listOf(known)))
+        assertEquals(1, track(restored).invasion!!.currentWave)
+    }
+
+    @Test fun `presence is independently persisted per player and never inferred from cadence`() {
+        val engine = InvasionDirector.create(1, fixedSpec())
+        val point = observation("player").position!!
+        repeat(36_000) { engine.recordPresence("player", point) }
+        assertTrue(engine.regionFamiliar("player", point))
+        assertFalse(engine.regionFamiliar("other", point))
+        val restored = InvasionDirector.restore(engine.snapshot(), fixedSpec())
+        restored.transition(DirectorFrame(1_000_000)) // offline must add nothing
+        assertEquals(engine.snapshot().regionalPresence, restored.snapshot().regionalPresence)
+        assertTrue(restored.regionFamiliar("player", point))
+    }
+
     private fun fixedSpec() = InvasionRuntimeSpec.create(rules, roster)
     private fun observation(id: String, x: Int = 0, low: Boolean = false) =
         PlayerObservation(id, true, true, true, BlockPoint("minecraft:overworld", x, 64, 0), low)

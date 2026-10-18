@@ -67,6 +67,8 @@ object PillagerCampaignsEvents {
             server.overworld().chunkSource.getChunkNow(chunkX, chunkZ)?.let { atlas.observe(server.overworld(), it) }
         }
         if (!PillagerCampaignsConfig.enabled.get()) return
+        // Sample the actual online state every tick, never the elapsed campaign/world clock.
+        server.playerList.players.forEach(::recordOnlinePresence)
         val now = server.overworld().gameTime
         val interval = PillagerCampaignsConfig.intervalTicks.get().toLong()
         if (now % interval != 0L) return
@@ -102,6 +104,8 @@ object PillagerCampaignsEvents {
         val overriddenInvasions = strategicRoutes.map(StrategicRouteObservation::invasionId).toSet()
         val routes = snapshot.tracks.values.mapNotNull { track ->
             val invasion = track.invasion?.takeIf { it.phase == InvasionPhase.APPROACHING } ?: return@mapNotNull null
+            if (players.none { it.playerId in invasion.participantPlayerIds && it.regionFamiliar && it.physicallyAvailable && it.eligible })
+                return@mapNotNull null
             if (invasion.invasionId in overriddenInvasions) return@mapNotNull null
             val target = invasion.routeTarget ?: return@mapNotNull null
             val localSearchTick = if (invasion.kind == EncounterKind.ASSAULT)
@@ -195,8 +199,19 @@ object PillagerCampaignsEvents {
             physicallyAvailable = player.isAlive,
             position = BlockPoint(player.serverLevel().dimension().location().toString(), player.blockX, player.blockY, player.blockZ),
             lowHealth = InjuryCompat.semanticHealth(player) / player.maxHealth.coerceAtLeast(1.0f) < 0.35f,
+            regionFamiliar = regionFamiliar(player),
         )
     }
+
+    internal fun recordOnlinePresence(player: ServerPlayer) {
+        if (!player.isAlive || player.gameMode.gameModeForPlayer != GameType.SURVIVAL) return
+        PillagerWorldData.get(player.serverLevel().server).recordPresence(player.uuid.toString(), BlockPoint(
+            player.serverLevel().dimension().location().toString(), player.blockX, player.blockY, player.blockZ))
+    }
+
+    internal fun regionFamiliar(player: ServerPlayer): Boolean = PillagerWorldData.get(player.serverLevel().server)
+        .regionFamiliar(player.uuid.toString(), BlockPoint(player.serverLevel().dimension().location().toString(),
+            player.blockX, player.blockY, player.blockZ))
 
     @SubscribeEvent(priority = net.minecraftforge.eventbus.api.EventPriority.LOWEST)
     fun onLivingDeath(event: LivingDeathEvent) {
@@ -282,8 +297,8 @@ object PillagerCampaignsEvents {
         val player = target(source, name)
         if (player == null) { source.sendFailure(Component.literal("Player is not online")); return 0 }
         val observation = observePlayer(player)
-        if (!observation.eligible || !observation.surfaceEligible || !observation.physicallyAvailable) {
-            source.sendFailure(Component.literal("Cannot force a campaign: ${player.scoreboardName} must be alive, standing near the Overworld surface, and in Survival mode"))
+        if (!observation.eligible || !observation.surfaceEligible || !observation.physicallyAvailable || !observation.regionFamiliar) {
+            source.sendFailure(Component.literal("Cannot force a campaign: ${player.scoreboardName} must be alive, near the Overworld surface in Survival, with 30 minutes of accumulated regional presence"))
             return 0
         }
         val data = PillagerWorldData.get(source.server)

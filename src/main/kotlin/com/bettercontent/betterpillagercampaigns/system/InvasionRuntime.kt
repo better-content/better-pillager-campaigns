@@ -81,9 +81,11 @@ object InvasionRuntime {
         (listOf(effect.playerId) + effect.participantPlayerIds).distinct()
 
     internal fun materialize(server: MinecraftServer, effect: DirectorEffect): Boolean {
-        val intended = player(server, effect.playerId) ?: return false
-        val level = intended.serverLevel()
-        val anchor = effect.anchor?.takeIf { it.dimension == level.dimension().location().toString() } ?: return false
+        val intended = player(server, effect.playerId)
+        val anchor = effect.anchor ?: return false
+        val dimension = ResourceLocation.tryParse(anchor.dimension) ?: return false
+        val level = server.getLevel(net.minecraft.resources.ResourceKey.create(
+            net.minecraft.core.registries.Registries.DIMENSION, dimension)) ?: return false
         val anchorPos = BlockPos(anchor.x, anchor.y, anchor.z)
         val target = nearestEligible(level, anchorPos, intended, effect.participantPlayerIds) ?: return false
         return materializeAgainst(level, target, effect)
@@ -96,6 +98,7 @@ object InvasionRuntime {
         pathValidator: (Mob, BlockPos, StrategicFrontier) -> Boolean = ::pathMatchesFrontier,
     ): Boolean {
         val server = level.server
+        if (!freshTargetEligible(target) || target.serverLevel() !== level) return false
         val anchor = effect.anchor?.takeIf { it.dimension == level.dimension().location().toString() } ?: return false
         val anchorPos = BlockPos(anchor.x, anchor.y, anchor.z)
         val targetPos = target.blockPosition()
@@ -280,15 +283,19 @@ object InvasionRuntime {
     private fun nearestEligible(
         level: ServerLevel,
         origin: BlockPos,
-        fallback: ServerPlayer,
+        fallback: ServerPlayer?,
         participantIds: List<String>,
     ): ServerPlayer? =
         level.players().filterIsInstance<ServerPlayer>().filter {
-            it.isAlive && it.gameMode.gameModeForPlayer == GameType.SURVIVAL &&
-                it.serverLevel().dimension() == Level.OVERWORLD &&
+            freshTargetEligible(it) &&
                 (participantIds.isEmpty() || it.uuid.toString() in participantIds)
         }.minWithOrNull(compareBy<ServerPlayer> { it.distanceToSqr(origin.x + 0.5, origin.y + 0.5, origin.z + 0.5) }
-            .thenBy { it.uuid.toString() }) ?: fallback.takeIf { it.isAlive }
+            .thenBy { it.uuid.toString() }) ?: fallback?.takeIf { it.serverLevel() === level && freshTargetEligible(it) }
+
+    internal fun freshTargetEligible(player: ServerPlayer): Boolean =
+        player.isAlive && player.gameMode.gameModeForPlayer == GameType.SURVIVAL &&
+            player.serverLevel().dimension() == Level.OVERWORLD &&
+            com.bettercontent.betterpillagercampaigns.PillagerCampaignsEvents.regionFamiliar(player)
 
     private fun player(server: MinecraftServer, playerId: String): ServerPlayer? =
         runCatching { java.util.UUID.fromString(playerId) }.getOrNull()?.let(server.playerList::getPlayer)

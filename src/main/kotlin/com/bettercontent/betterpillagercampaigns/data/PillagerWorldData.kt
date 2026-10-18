@@ -35,6 +35,16 @@ class PillagerWorldData private constructor(private var restored: DirectorSnapsh
         }
     }
 
+    fun recordPresence(playerId: String, position: com.bettercontent.betterpillagercampaigns.core.BlockPoint) {
+        val director = engine
+        if (director != null) director.recordPresence(playerId, position)
+        else restored.regionalPresence.getOrPut(playerId) { com.bettercontent.betterpillagercampaigns.core.RegionalPresence() }.record(position)
+        setDirty()
+    }
+
+    fun regionFamiliar(playerId: String, position: com.bettercontent.betterpillagercampaigns.core.BlockPoint): Boolean =
+        engine?.regionFamiliar(playerId, position) ?: (restored.regionalPresence[playerId]?.familiar(position) == true)
+
     fun snapshot(): DirectorSnapshot = engine?.snapshot() ?: copy(restored)
     fun runtimeRevision(): String = runtimeRevision
 
@@ -49,7 +59,8 @@ class PillagerWorldData private constructor(private var restored: DirectorSnapsh
         val snapshot = snapshot()
         tag.putInt("schema", DirectorSnapshot.CURRENT_SCHEMA_VERSION)
         tag.putString("runtimeRevision", runtimeRevision)
-        tag.putString("snapshot", JSON.encodeToString(snapshot))
+        // NBT strings have a 65,535-byte modified-UTF limit; regional maps exceed it.
+        tag.putByteArray("snapshotBytes", JSON.encodeToString(snapshot).toByteArray(Charsets.UTF_8))
         return tag
     }
 
@@ -68,11 +79,13 @@ class PillagerWorldData private constructor(private var restored: DirectorSnapsh
 
         internal fun load(tag: CompoundTag, worldSeed: Long): PillagerWorldData {
             val schema = tag.getInt("schema")
-            if (schema !in 2..DirectorSnapshot.CURRENT_SCHEMA_VERSION || !tag.contains("snapshot")) {
+            if (schema !in 2..DirectorSnapshot.CURRENT_SCHEMA_VERSION || (!tag.contains("snapshot") && !tag.contains("snapshotBytes"))) {
                 if (!tag.isEmpty) PillagerCampaignsMod.LOGGER.warn("Discarding unsupported Better Pillager Campaigns state schema {}", schema)
                 return PillagerWorldData(DirectorSnapshot(worldSeed = worldSeed))
             }
-            var snapshot = runCatching { JSON.decodeFromString<DirectorSnapshot>(tag.getString("snapshot")) }
+            var snapshot = runCatching { JSON.decodeFromString<DirectorSnapshot>(
+                if (tag.contains("snapshotBytes")) String(tag.getByteArray("snapshotBytes"), Charsets.UTF_8)
+                else tag.getString("snapshot")) }
                 .getOrElse { error ->
                     PillagerCampaignsMod.LOGGER.error("Invalid Better Pillager Campaigns invasion state; starting fresh", error)
                     DirectorSnapshot(worldSeed = worldSeed)
@@ -108,6 +121,8 @@ class PillagerWorldData private constructor(private var restored: DirectorSnapsh
                 PillagerCampaignsMod.LOGGER.warn(
                     "Migrated Better Pillager Campaigns schema 3 active encounters to virtual strategic travel")
             }
+            // Older worlds retain cadence/encounters but start with no invented presence history.
+            snapshot = snapshot.copy(schemaVersion = DirectorSnapshot.CURRENT_SCHEMA_VERSION)
             return PillagerWorldData(snapshot).also { it.runtimeRevision = tag.getString("runtimeRevision").ifBlank { "unresolved" } }
         }
 
