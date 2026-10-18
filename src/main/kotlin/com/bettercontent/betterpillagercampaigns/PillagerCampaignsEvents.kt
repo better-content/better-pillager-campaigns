@@ -243,8 +243,12 @@ object PillagerCampaignsEvents {
         val invasionId = InvasionRuntime.invasionId(mob) ?: return
         val server = event.level.server ?: return
         val active = PillagerWorldData.get(server).snapshot().tracks.values.any { it.invasion?.invasionId == invasionId }
-        if (!active) mob.discard()
-        else InvasionRuntime.installCombatGoal(mob)
+        if (!active) {
+            // Join fires before the entity receives its world-removal callback. Discard alone
+            // would still let Forge register and track an already-removed, unticking ghost.
+            event.isCanceled = true
+            mob.discard()
+        } else InvasionRuntime.installCombatGoal(mob)
     }
 
     @SubscribeEvent

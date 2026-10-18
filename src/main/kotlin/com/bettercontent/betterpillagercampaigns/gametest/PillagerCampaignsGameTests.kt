@@ -70,7 +70,7 @@ object PillagerCampaignsGameTests {
         val reloaded = PillagerWorldData.load(savedTag, helper.level.seed)
         helper.assertTrue(reloaded.regionFamiliar(id, BlockPoint("minecraft:overworld", player.blockX, player.blockY, player.blockZ)),
             "Native NBT save/reload must retain regional history")
-        helper.assertTrue(InvasionRuntime.materializeAgainst(helper.level, player, effect), "Established presence permits a packet")
+        helper.assertTrue(materializeFixture(helper, player, effect), "Established presence permits a packet")
         val mob = InvasionRuntime.liveMembers(helper.level.server, effect.invasionId).single()
         data.restoreSnapshot(unknown, InvasionRoster.runtimeSpec())
         val next = effect.copy(effectId = "presence-next", waveIndex = 1,
@@ -466,6 +466,62 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_stale_join", timeoutTicks = 100)
+    fun endedCampaignRejectsFreshAndSavedMembersBeforeRegistration(helper: GameTestHelper) {
+        val base = helper.absolutePos(BlockPos(1, 2, 1))
+        buildSurface(helper, base)
+        val player = fake(helper, "stale-join")
+        player.setGameMode(GameType.SURVIVAL)
+        player.moveTo(base.x + 11.5, base.y.toDouble(), base.z + 7.5)
+        val anchor = base.offset(3, 0, 7)
+        val effect = DirectorEffect("stale-join", EffectKind.MATERIALIZE, player.uuid.toString(),
+            "stale-join-invasion", EncounterKind.SCOUT, 0,
+            BlockPoint("minecraft:overworld", anchor.x, anchor.y, anchor.z),
+            listOf(MemberPlan("stale-join-member", "minecraft:pillager", 2)))
+        helper.assertTrue(materializeFixture(helper, player, effect), "Active campaign control must materialize")
+        val original = InvasionRuntime.liveMembers(helper.level.server, effect.invasionId).single()
+        val saved = net.minecraft.nbt.CompoundTag()
+        helper.assertTrue(original.save(saved), "Campaign member must be serializable as a chunk entity")
+        original.remove(net.minecraft.world.entity.Entity.RemovalReason.UNLOADED_TO_CHUNK)
+        fun reload(): Mob = EntityType.loadEntityRecursive(saved.copy(), helper.level) { it } as Mob
+        fun registered(mob: Mob): Boolean = helper.level.getEntity(mob.uuid) === mob &&
+            helper.level.getEntity(mob.id) === mob &&
+            helper.level.getEntitiesOfClass(Mob::class.java, mob.boundingBox.inflate(1.0)).any { it === mob }
+
+        // Exercise Forge's loaded-from-disk registration path, not a manually posted event.
+        val active = reload()
+        helper.level.addLegacyChunkEntities(java.util.stream.Stream.of(active))
+        helper.assertTrue(!active.isRemoved && registered(active), "A saved active member must rejoin normally")
+        InvasionRuntime.retire(helper.level.server, effect.invasionId)
+        val data = PillagerWorldData.get(helper.level.server)
+        val snapshot = data.snapshot()
+        snapshot.tracks.getValue(effect.playerId).invasion = null
+        data.restoreSnapshot(snapshot, InvasionRoster.runtimeSpec())
+
+        val stale = reload()
+        helper.level.addLegacyChunkEntities(java.util.stream.Stream.of(stale))
+        fun assertRejected(mob: Mob) {
+            helper.assertTrue(helper.level.getEntity(mob.uuid) == null && helper.level.getEntity(mob.id) == null &&
+                helper.level.allEntities.none { it === mob } &&
+                helper.level.getEntitiesOfClass(Mob::class.java, mob.boundingBox.inflate(1.0)).none { it === mob },
+                "Ended campaign member must never enter lookup, tracking-visible storage or collision sections")
+        }
+        assertRejected(stale)
+        val fresh = EntityType.PILLAGER.create(helper.level)!!
+        fresh.moveTo(anchor.x + 0.5, anchor.y.toDouble(), anchor.z + 0.5)
+        fresh.persistentData.putString(InvasionRuntime.INVASION_TAG, effect.invasionId)
+        helper.assertTrue(!helper.level.addFreshEntity(fresh), "Fresh stale members must report rejected registration")
+        assertRejected(fresh)
+        helper.runAfterDelay(2) {
+            assertRejected(stale)
+            assertRejected(fresh)
+            helper.assertTrue(InvasionRuntime.liveMembers(helper.level.server, effect.invasionId).isEmpty(),
+                "Rejected members must not inflate campaign population")
+            helper.succeed()
+        }
+    }
+
+    @JvmStatic
     @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_spawn", timeoutTicks = 100)
     fun eventAuthoredSpawnGetsTargetProvenanceAndCleansUp(helper: GameTestHelper) {
         regionalPresenceSurvivesNativeSaveAndBlocksFreshPackets(helper)
@@ -486,7 +542,7 @@ object PillagerCampaignsGameTests {
                 BlockPoint("minecraft:overworld", anchor.x, anchor.y, anchor.z),
                 listOf(MemberPlan(memberId, recruit.entityId, recruit.cost, 1)),
             )
-            helper.assertTrue(InvasionRuntime.materializeAgainst(helper.level, fake, effect),
+            helper.assertTrue(materializeFixture(helper, fake, effect),
                 "EVENT-authored ${recruit.entityId} must spawn and reach the dummy player")
             val member = InvasionRuntime.liveMembers(helper.level.server, invasionId).single()
             helper.assertTrue(member.target === fake, "${recruit.entityId} must target the eligible dummy player")
@@ -520,7 +576,7 @@ object PillagerCampaignsGameTests {
             BlockPoint("minecraft:overworld", firstAnchor.x, firstAnchor.y, firstAnchor.z), members,
             validateApproach = true,
         )
-        helper.assertTrue(InvasionRuntime.materializeAgainst(helper.level, fake, first) { _, _, _ ->
+        helper.assertTrue(materializeFixture(helper, fake, first) { _, _, _ ->
             pathQueries++
             true
         }, "A complete packet must materialize after its lead path is accepted")
@@ -535,7 +591,7 @@ object PillagerCampaignsGameTests {
             members = (7..12).map { MemberPlan("lead-proof-$it", "minecraft:pillager", 2) },
             validateApproach = false,
         )
-        helper.assertTrue(InvasionRuntime.materializeAgainst(helper.level, fake, later) { _, _, _ ->
+        helper.assertTrue(materializeFixture(helper, fake, later) { _, _, _ ->
             pathQueries++
             true
         }, "A later packet at a validated approach must materialize under vanilla navigation")
@@ -565,7 +621,7 @@ object PillagerCampaignsGameTests {
             listOf(MemberPlan("sealed-member", "minecraft:pillager", 2)),
             strategicFrontier = StrategicFrontier.DEFENSE,
         )
-        helper.assertTrue(InvasionRuntime.materializeAgainst(helper.level, fake, effect),
+        helper.assertTrue(materializeFixture(helper, fake, effect),
             "A known sealed defense must materialize on its exterior even though the real path is partial")
         val member = InvasionRuntime.liveMembers(helper.level.server, "sealed-invasion").single()
         helper.assertTrue(member.blockX < base.x + 7,
@@ -610,7 +666,7 @@ object PillagerCampaignsGameTests {
                 listOf(BlockPoint(target.dimension, outside.x - 3, outside.y, outside.z),
                     BlockPoint(target.dimension, outside.x, outside.y, outside.z)), StrategicFrontier.OPEN),
         ))).effects.single { it.kind == EffectKind.MATERIALIZE }
-        helper.assertTrue(!InvasionRuntime.materializeAgainst(helper.level, fake, rejected),
+        helper.assertTrue(!materializeFixture(helper, fake, rejected),
             "The exact pathfinder must reject the atlas-open approach outside the closed defense")
         director.transition(DirectorFrame(0, effectResults = listOf(EffectResult(rejected.effectId, false))))
         invasion = director.snapshot().tracks.getValue(playerId).invasion!!
@@ -625,7 +681,7 @@ object PillagerCampaignsGameTests {
             ))).effects.single { it.kind == EffectKind.MATERIALIZE }
         helper.assertTrue(retried.anchor == BlockPoint(target.dimension, reachable.x, reachable.y, reachable.z),
             "Retry must advance to the alternate anchor instead of recycling the rejected one")
-        helper.assertTrue(InvasionRuntime.materializeAgainst(helper.level, fake, retried),
+        helper.assertTrue(materializeFixture(helper, fake, retried),
             "The alternate same-side approach must pass exact navigation")
         val members = InvasionRuntime.liveMembers(helper.level.server, invasion.invasionId)
         helper.assertTrue(members.size == 3 && members.all { it.target === fake },
@@ -706,7 +762,7 @@ object PillagerCampaignsGameTests {
             val results = transition.effects.map { effect ->
                 val successful = when (effect.kind) {
                     EffectKind.WARN -> true
-                    EffectKind.MATERIALIZE -> InvasionRuntime.materializeAgainst(helper.level, fake, effect)
+                    EffectKind.MATERIALIZE -> materializeFixture(helper, fake, effect)
                     EffectKind.RETIRE -> InvasionRuntime.retire(helper.level.server, effect.invasionId)
                 }
                 helper.assertTrue(successful, "${effect.kind} failed for repeated campaign ${effect.invasionId}")
@@ -866,6 +922,31 @@ object PillagerCampaignsGameTests {
                 "Reading atlas terrain must not reload or ticket the chunk")
             helper.succeed()
         }
+    }
+
+    private fun materializeFixture(
+        helper: GameTestHelper,
+        player: ServerPlayer,
+        effect: DirectorEffect,
+        pathValidator: ((Mob, BlockPos, StrategicFrontier) -> Boolean)? = null,
+    ): Boolean {
+        // Production publishes its Director transition before executing effects. Direct adapter
+        // fixtures must likewise publish an active encounter, not rely on removed join ghosts.
+        val data = PillagerWorldData.get(helper.level.server)
+        val snapshot = data.snapshot()
+        snapshot.tracks.getOrPut(effect.playerId) { PlayerPressureTrack(effect.playerId) }.invasion = InvasionState(
+            effect.invasionId, effect.encounterKind, effect.playerId, listOf(effect.playerId), 0,
+            listOf(WavePlan(effect.waveIndex, effect.members.sumOf { it.cost }, effect.members)),
+            phase = InvasionPhase.ACTIVE,
+        )
+        data.restoreSnapshot(snapshot, InvasionRoster.runtimeSpec())
+        val successful = if (pathValidator == null) InvasionRuntime.materializeAgainst(helper.level, player, effect)
+            else InvasionRuntime.materializeAgainst(helper.level, player, effect, pathValidator)
+        if (successful) InvasionRuntime.liveMembers(helper.level.server, effect.invasionId).forEach { mob ->
+            helper.assertTrue(!mob.isRemoved && mob.isAlive && helper.level.getEntity(mob.uuid) === mob,
+                "Successful fixture materialization must produce registered living members, not removed ghosts")
+        }
+        return successful
     }
 
     private fun buildSurface(helper: GameTestHelper, base: BlockPos) {
