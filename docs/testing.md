@@ -2,6 +2,12 @@
 
 `./gradlew verifyFast --no-daemon` runs the fixed 1,024-seed Core corpus, runner, Forge-facing unit tests, and the Core 90% line-coverage gate. `./gradlew verifyFull --no-daemon` adds headless Forge GameTests. `./gradlew verifyWorld --no-daemon` runs the Forge lane with the exact authored roster mods.
 
+## Isolated source GameTest world
+
+Only `runGameTestServer` stages tracked `gametest/server.properties` before creating its fresh world: flat plains, fixture seed 0, bedrock/dirt/grass layers, no lakes, features or structures. This does not change production pack worlds, `runServer` or `runClient`. The native fixtures assert the actual flat generator, seed, minimum Y and dry authored body, rather than trusting properties alone. Both wide-arena templates declare their full 34×8×34 bounds. Retain the previous run/world, properties, build and logs under the shared retention policy before reset/staging.
+
+Retaliation uses three separated native lanes with the same primary and three original scout archetypes, each with its own same-species NoAI/invulnerable zombie. Each scout receives a real native Hurt event from its own zombie; all seven original actors must remain alive, UUID-identical and natively ticking at the exact per-scout latest-hit 190/200 checks. Scouts gain no health/invulnerability and no goals, arrows or damage events are suppressed; the total 340-tick deadline is unchanged. The lanes isolate observed allied-arrow exposure. Historical fatal callbacks were not captured: the observed arrow chain supports an inference, not an invented death event; retained environmental-fluid evidence likewise does not identify every historical killer.
+
 ## Deterministic Core gate
 
 ```sh
@@ -33,7 +39,7 @@ For the installed pack roster, run `/better_pillager_campaigns export_runtime_sp
 - Ignore or leave an invasion and verify remaining tagged entities retire within the configured idle/unavailable limits.
 - Load a schema-2 world copy and verify clocks/outcome pressure survive while an active legacy encounter is cleared with one explicit warning.
 
-The hunting matrix reuses one arena and one player/mob pair sequentially for thirteen cases (450 ticks each; 650 for the two-wall moving-target workload). This avoids simultaneous structure preparation and cross-case combat/ticket interference. The original eleven scenarios are run in separate single-arena batches, preserving their assertions and per-test deadlines while bounding synchronous batch setup.
+The hunting matrix reuses one arena and one player/mob pair sequentially for thirteen cases (450 native ticks each; 650 for the two-wall moving-target workload). Before each case clock, fixture-only public chunk warming establishes the owned FULL 32+8 collision halo and native actor/online-target readiness must complete within 20 ticks. Halo validity is checked during the case; no production force-load policy changes. The original total 6500-tick deadline remains (6050 case ticks plus at most 260 readiness ticks). This avoids simultaneous structure preparation and cross-case combat/ticket interference. The original eleven scenarios are run in separate single-arena batches, preserving their assertions and per-test deadlines while bounding synchronous batch setup.
 
 The hunting cases exercise every authored recruit plus ravagers with native combat goals replaced by a deliberately non-progressing native-priority MOVE goal. This isolates movement starvation from legitimate stationary spells/attacks. Each must recover and navigate a wall opening or establish a visible ranged firing position using real entity movement. Additional cases cover TConstruct crossbow firing after rounding the wall, a moving target plus a new obstruction, a native archer retaining its firing position, idempotent goal installation, and an enclosed defense that must remain intact. Online invulnerable Survival targets supply real entity-ticking tickets; loaded structure chunks alone are not sufficient to prove AI movement. Pure progress tests cover idle/stalled deadlines, detour displacement, jitter, target changes and clock reset.
 

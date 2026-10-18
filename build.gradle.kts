@@ -1,5 +1,7 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.gradle.api.tasks.SourceSetContainer
+import groovy.json.JsonSlurper
+import java.util.Properties
 
 plugins {
     idea
@@ -153,7 +155,41 @@ val syncGameTestStructures by tasks.registering(Copy::class) {
     into(layout.projectDirectory.dir("run/gameteststructures"))
 }
 
+val verifyGameTestFixtureProfile by tasks.registering {
+    group = "verification"
+    val profile = layout.projectDirectory.file("gametest/server.properties")
+    inputs.file(profile)
+    inputs.files("gameteststructures/wide_arena.snbt", "src/main/resources/gameteststructures/wide_arena.snbt")
+    doLast {
+        val properties = Properties().apply { profile.asFile.inputStream().use { load(it) } }
+        check(properties.getProperty("level-name") == "world")
+        check(properties.getProperty("level-type") == "minecraft:flat")
+        check(properties.getProperty("level-seed") == "0")
+        check(properties.getProperty("generate-structures") == "false")
+        val settings = JsonSlurper().parseText(properties.getProperty("generator-settings")) as Map<*, *>
+        check(settings["biome"] == "minecraft:plains" && settings["lakes"] == false && settings["features"] == false)
+        check(settings["structure_overrides"] == emptyList<Any>())
+        val layers = (settings["layers"] as List<*>).map { layer ->
+            val value = layer as Map<*, *>
+            (value["block"] as String) to (value["height"] as Number).toInt()
+        }
+        check(layers == listOf("minecraft:bedrock" to 1, "minecraft:dirt" to 2, "minecraft:grass_block" to 1))
+        val template = file("gameteststructures/wide_arena.snbt").readText()
+        check(template == file("src/main/resources/gameteststructures/wide_arena.snbt").readText())
+        check("size: [34, 8, 34]" in template)
+    }
+}
+
+val prepareGameTestFixtureProfile by tasks.registering(Copy::class) {
+    dependsOn(verifyGameTestFixtureProfile)
+    from(layout.projectDirectory.file("gametest/server.properties"))
+    into(layout.projectDirectory.dir("run"))
+    // Main rewrites defaults; never let an older NORMAL profile survive a native invocation.
+    outputs.upToDateWhen { false }
+}
+
 val cleanGameTestWorld by tasks.registering(Delete::class) {
+    dependsOn(prepareGameTestFixtureProfile)
     delete(layout.projectDirectory.dir("run/world"))
 }
 
@@ -273,7 +309,7 @@ tasks.check {
 tasks.register("verifyFast") {
     group = "verification"
     description = "Runs the fast deterministic verification lane."
-    dependsOn(tasks.named("check"))
+    dependsOn(tasks.named("check"), verifyGameTestFixtureProfile)
     dependsOn(":invasion-core:check")
     dependsOn(":runner:test")
 }

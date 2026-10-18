@@ -81,6 +81,7 @@ object CampaignHuntingGameTests {
             for (y in 0..4) helper.level.setBlockAndUpdate(base.offset(x, y, z),
                 if (wall) Blocks.STONE.defaultBlockState() else Blocks.AIR.defaultBlockState())
         }
+        requireCampaignFixtureWorld(helper, base)
         // A real online player supplies entity-ticking tickets, not merely loaded test chunks.
         val name = "hunt-${id.substringAfter(':')}-${if (crossbow) "bow" else if (sealed) "seal" else if (moving) "move" else if (stationary) "fire" else "idle"}"
         val target = ServerPlayer(helper.level.server, helper.level,
@@ -116,6 +117,13 @@ object CampaignHuntingGameTests {
         InvasionRuntime.installCombatGoal(mob)
         helper.assertTrue(mob.goalSelector.availableGoals.count { it.goal is CampaignHuntGoal } == 1,
             "Hunting installation must be idempotent")
+        // Own the complete maximum native collision cache before starting the case clock.
+        // This is synchronous fixture preparation, never a production force-load policy.
+        for (chunkX in ((base.x - 40) shr 4)..((base.x + 33 + 40) shr 4))
+            for (chunkZ in ((base.z - 40) shr 4)..((base.z + 33 + 40) shr 4))
+                helper.level.getChunk(chunkX, chunkZ)
+        helper.assertTrue(SurfaceGridSampler.loadedRectangle(helper.level, base, base.offset(33, 0, 33), 40),
+            "Fixture must own its complete FULL 32+8 collision halo before native hunting")
         // No subscription exists while setup assertions can fail before Scenario is returned.
         val deathTrace = CampaignFixtureActorTrace(helper, listOf(mob), 6500L,
             "hunting:$case authoredArena=${base.offset(0, -1, 0)}..${base.offset(34, 5, 34)}")
@@ -123,7 +131,22 @@ object CampaignHuntingGameTests {
         var firingPosition = false
         var fired = false
         var borrowedMovement = false
-        return Scenario(frame@ { elapsed ->
+        val readinessStarted = helper.level.gameTime
+        var readyAt: Long? = null
+        return Scenario(frame@ { _ ->
+            if (readyAt == null) {
+                val ready = helper.level.server.playerList.getPlayer(target.uuid) === target &&
+                    listOf(mob, target).all { actor -> actor.isAlive && !actor.isRemoved && actor.tickCount > 0 &&
+                        helper.level.getEntity(actor.uuid) === actor && helper.level.isPositionEntityTicking(actor.blockPosition()) }
+                helper.assertTrue(ready || helper.level.gameTime - readinessStarted < 20L,
+                    "Native case readiness must fit 20 ticks: ${deathTrace.state(mob)}; ${deathTrace.state(target)}")
+                if (!ready) return@frame false
+                readyAt = helper.level.gameTime
+                deathTrace.note("case-native-ready-full-owned-halo")
+            }
+            val elapsed = (helper.level.gameTime - readyAt!!).toInt()
+            helper.assertTrue(SurfaceGridSampler.loadedRectangle(helper.level, mob.blockPosition(), mob.blockPosition(), 40),
+                "Native hunting requires its prewarmed FULL 32+8 collision halo: ${deathTrace.state(mob)}")
             crossed = crossed || mob.x > base.x + 17.0
             firingPosition = firingPosition || (mob is RangedAttackMob &&
                 mob.distanceToSqr(target) <= 256.0 && mob.sensing.hasLineOfSight(target))
@@ -167,6 +190,18 @@ object CampaignHuntingGameTests {
     }
 }
 
+/** Authored source GameTest isolation only; production worlds and interactive runs are untouched. */
+internal fun requireCampaignFixtureWorld(helper: GameTestHelper, base: BlockPos) {
+    helper.assertTrue(helper.level.chunkSource.generator is net.minecraft.world.level.levelgen.FlatLevelSource &&
+        helper.level.seed == 0L && helper.level.minBuildHeight == -64,
+        "Source GameTests require the actual authored flat seed0 Overworld, not merely properties")
+    for (x in 0..33) for (z in 0..33) for (y in 0..5) {
+        val pos = base.offset(x, y, z)
+        helper.assertTrue(helper.level.getFluidState(pos).isEmpty,
+            "Authored dry fixture body must not contain environmental fluid at $pos")
+    }
+}
+
 /** Read-only diagnostics for these two campaign fixtures, never a production observer. */
 internal class CampaignFixtureActorTrace(
     private val helper: GameTestHelper,
@@ -180,7 +215,7 @@ internal class CampaignFixtureActorTrace(
         private set
     private val origin = helper.absolutePos(BlockPos.ZERO)
     private val templateBounds = net.minecraft.world.phys.AABB(origin.x.toDouble(), origin.y.toDouble(), origin.z.toDouble(),
-        origin.x + 34.0, origin.y + 2.0, origin.z + 34.0)
+        origin.x + 34.0, origin.y + 8.0, origin.z + 34.0)
 
     fun state(entity: net.minecraft.world.entity.Entity): String =
         "${ForgeRegistries.ENTITY_TYPES.getKey(entity.type)}[uuid=${entity.uuid},id=${entity.id},pos=${entity.position()},bbox=${entity.boundingBox}," +

@@ -100,13 +100,17 @@ object PillagerCampaignsGameTests {
     @JvmStatic
     @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_retaliation", timeoutTicks = 340)
     fun everyScoutArchetypeRetaliatesForTenSeconds(helper: GameTestHelper) {
-        val base = helper.absolutePos(BlockPos(1, 2, 1))
-        for (x in 0..28) for (z in 0..14) {
-            val pos = base.offset(x, 0, z)
-            helper.level.setBlockAndUpdate(pos.below(), Blocks.STONE.defaultBlockState())
-            helper.level.setBlockAndUpdate(pos, Blocks.AIR.defaultBlockState())
-            helper.level.setBlockAndUpdate(pos.above(), Blocks.AIR.defaultBlockState())
+        val base = helper.absolutePos(BlockPos(0, 2, 0))
+        // Closed native duels prevent observed allied arrows from invalidating another scout.
+        // No scout health, combat goal, projectile or damage event is suppressed.
+        for (x in 0..33) for (z in 0..33) {
+            helper.level.setBlockAndUpdate(base.offset(x, -1, z), Blocks.STONE.defaultBlockState())
+            val separator = x == 0 || x == 33 || z in listOf(0, 11, 22, 33)
+            for (y in 0..5) helper.level.setBlockAndUpdate(base.offset(x, y, z),
+                if (separator) Blocks.STONE.defaultBlockState() else Blocks.AIR.defaultBlockState())
         }
+        requireCampaignFixtureWorld(helper, base)
+        val laneZ = listOf(5.5, 16.5, 27.5)
         val primary = ServerPlayer(helper.level.server, helper.level,
             GameProfile(UUID.nameUUIDFromBytes("campaign-test-scout-primary".toByteArray()), "campaign-test-scout-primary"))
         val connection = Connection(PacketFlow.SERVERBOUND)
@@ -114,18 +118,21 @@ object PillagerCampaignsGameTests {
         helper.level.server.playerList.placeNewPlayer(connection, primary)
         primary.setGameMode(GameType.SURVIVAL)
         primary.abilities.invulnerable = true
-        primary.moveTo(base.x + 3.5, base.y.toDouble(), base.z + 7.5)
+        primary.moveTo(base.x + 3.5, base.y.toDouble(), base.z + laneZ[0])
 
-        val attacker = EntityType.ZOMBIE.create(helper.level)!!
-        attacker.moveTo(base.x + 23.5, base.y.toDouble(), base.z + 7.5)
-        attacker.isNoAi = true
-        attacker.isInvulnerable = true
-        helper.assertTrue(helper.level.addFreshEntity(attacker), "Retaliation attacker must enter the level")
+        val attackers = laneZ.map { z ->
+            EntityType.ZOMBIE.create(helper.level)!!.also { attacker ->
+                attacker.moveTo(base.x + 23.5, base.y.toDouble(), base.z + z)
+                attacker.isNoAi = true
+                attacker.isInvulnerable = true
+                helper.assertTrue(helper.level.addFreshEntity(attacker), "Each lane's original zombie attacker must enter the level")
+            }
+        }
         val scouts = listOf("minecraft:pillager", "takesapillage:archer", "takesapillage:skirmisher")
             .mapIndexed { index, id ->
                 val type = ForgeRegistries.ENTITY_TYPES.getValue(net.minecraft.resources.ResourceLocation.tryParse(id))!!
                 val mob = type.create(helper.level) as Mob
-                mob.moveTo(base.x + 5.5, base.y.toDouble(), base.z + 5.5 + index)
+                mob.moveTo(base.x + 5.5, base.y.toDouble(), base.z + laneZ[index])
                 mob.finalizeSpawn(helper.level, helper.level.getCurrentDifficultyAt(mob.blockPosition()),
                     MobSpawnType.EVENT, null, null)
                 helper.assertTrue(helper.level.addFreshEntity(mob), "$id must enter the level")
@@ -138,8 +145,9 @@ object PillagerCampaignsGameTests {
                 mob.target = primary
                 mob
             }
-        val deathTrace = CampaignFixtureActorTrace(helper, scouts, 340L,
-            "scout-retaliation authoredArena=${base.offset(0, -1, 0)}..${base.offset(29, 2, 15)}")
+        val attackerByScout = scouts.mapIndexed { index, mob -> mob.uuid to attackers[index] }.toMap()
+        val deathTrace = CampaignFixtureActorTrace(helper, scouts + attackers, 340L,
+            "scout-retaliation three-native-lanes authoredArena=${base.offset(0, -1, 0)}..${base.offset(34, 6, 34)}")
         val readinessStarted = helper.tick
         var armedAt: Long? = null
         var archerFired = false
@@ -165,7 +173,7 @@ object PillagerCampaignsGameTests {
         fun state(): String = "testTick=${helper.tick},nativeTick=${helper.level.gameTime},armedAt=$armedAt," +
             "latestHits=$latestHit,checked190=$checked190,checked200=$checked200," +
             "primaryOnline=${helper.level.server.playerList.getPlayer(primary.uuid) === primary}," +
-            "primary=${actorState(primary)},attacker=${actorState(attacker)}," +
+            "primary=${actorState(primary)},attackers=${attackers.joinToString { actorState(it) }}," +
             "scouts=${scouts.joinToString { actorState(it) }},arenaBase=$base"
         fun trace(stage: String) {
             org.slf4j.LoggerFactory.getLogger("ScoutRetaliationTest").info("Retaliation {}: {}", stage, state())
@@ -180,7 +188,7 @@ object PillagerCampaignsGameTests {
             helper.assertTrue(condition, "$message; ${state()}")
         }
         fun checkNativeActors(stage: String) {
-            (listOf(primary, attacker) + scouts).forEach { entity ->
+            (listOf(primary) + attackers + scouts).forEach { entity ->
                 check(entity.isAlive && !entity.isRemoved && helper.level.getEntity(entity.uuid) === entity &&
                     helper.level.isPositionEntityTicking(entity.blockPosition()) && entity.tickCount > 0,
                     "$stage requires every original actor living, nonremoved, UUID-identical and natively ticking: ${deathTrace.state(entity)}")
@@ -229,7 +237,7 @@ object PillagerCampaignsGameTests {
                     if (armedAt == null) {
                         // Successful insertion need not mean UUID visibility or native ticking.
                         // Let the real online player's own native tickets settle first.
-                        val actors = listOf(primary, attacker) + scouts
+                        val actors = listOf(primary) + attackers + scouts
                         val ready = helper.level.server.playerList.getPlayer(primary.uuid) === primary &&
                             actors.all { entity -> helper.level.getEntity(entity.uuid) === entity &&
                                 helper.level.isPositionEntityTicking(entity.blockPosition()) && entity.tickCount > 0 }
@@ -238,10 +246,13 @@ object PillagerCampaignsGameTests {
                             preHitArrowIds.addAll(helper.level.getEntitiesOfClass(AbstractArrow::class.java,
                                 scouts[1].boundingBox.inflate(35.0)).filter { it.owner === scouts[1] }.map { it.uuid })
                             armedAt = helper.level.gameTime
-                            scouts.forEach { mob ->
-                                InvasionRuntime.recordScoutHit(mob, attacker)
+                            scouts.forEachIndexed { index, mob ->
+                                val attacker = attackerByScout.getValue(mob.uuid)
+                                check(mob.hurt(helper.level.damageSources().mobAttack(attacker), 1f) &&
+                                    hurtEventHit[mob.uuid] == helper.level.gameTime,
+                                    "Each original scout requires its own zombie's actual native Hurt event and production handler")
                                 latestHit[mob.uuid] = helper.level.gameTime
-                                mob.navigation.moveTo(base.x + 2.5, base.y.toDouble(), base.z + 7.5, 1.0)
+                                mob.navigation.moveTo(base.x + 2.5, base.y.toDouble(), base.z + laneZ[index], 1.0)
                                 InvasionRuntime.maintainTarget(mob)
                                 check(mob.persistentData.getLong("PillagerCampaignsLastHitTick") == armedAt && mob.target === attacker,
                                     "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must target its attacker while moving away at the actual native hit tick")
@@ -255,6 +266,7 @@ object PillagerCampaignsGameTests {
                             scouts[1].boundingBox.inflate(35.0)).any { it.owner === scouts[1] && it.uuid !in preHitArrowIds }
                         skirmisherApproached = skirmisherApproached || scouts[2].x > base.x + 9.5
                         scouts.forEach { mob ->
+                            val attacker = attackerByScout.getValue(mob.uuid)
                             val tag = mob.persistentData
                             val observed = tag.takeIf { it.contains("PillagerCampaignsLastHitTick") }?.getLong("PillagerCampaignsLastHitTick")
                             if (observed != null && observed > latestHit.getValue(mob.uuid)) {
@@ -294,7 +306,7 @@ object PillagerCampaignsGameTests {
                             trace("all-latest-native-windows-complete")
                             closeTrace()
                             scouts.forEach { it.discard() }
-                            attacker.discard()
+                            attackers.forEach { it.discard() }
                             helper.level.server.playerList.remove(primary)
                             channel.finishAndReleaseAll()
                             retaliationWindowExpired = true
