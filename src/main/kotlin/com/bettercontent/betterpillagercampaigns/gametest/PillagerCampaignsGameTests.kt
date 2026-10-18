@@ -26,6 +26,11 @@ import net.minecraft.world.level.ChunkPos
 import net.minecraft.world.level.block.Blocks
 import net.minecraft.server.level.TicketType
 import net.minecraftforge.common.util.FakePlayer
+import net.minecraftforge.common.MinecraftForge
+import net.minecraftforge.event.TickEvent
+import net.minecraftforge.event.entity.living.LivingHurtEvent
+import net.minecraftforge.eventbus.api.EventPriority
+import java.util.function.Consumer
 import net.minecraftforge.registries.ForgeRegistries
 import net.minecraftforge.gametest.GameTestHolder
 import net.minecraftforge.gametest.PrefixGameTestTemplate
@@ -131,50 +136,161 @@ object PillagerCampaignsGameTests {
                 if (mob.type == EntityType.PILLAGER) CampaignTconLoadouts.apply(mob)
                 InvasionRuntime.installCombatGoal(mob)
                 mob.target = primary
-                InvasionRuntime.recordScoutHit(mob, attacker)
-                mob.navigation.moveTo(base.x + 2.5, base.y.toDouble(), base.z + 7.5, 1.0)
-                InvasionRuntime.maintainTarget(mob)
-                helper.assertTrue(mob.target === attacker,
-                    "$id must target its attacker while moving away; " +
-                        "target=${mob.target?.let { ForgeRegistries.ENTITY_TYPES.getKey(it.type) }}, " +
-                        "attackerAlive=${attacker.isAlive}, attackerRegistered=${helper.level.getEntity(attacker.uuid) === attacker}, " +
-                        "hitTick=${mob.persistentData.getLong("PillagerCampaignsLastHitTick")}, now=${helper.level.gameTime}")
                 mob
             }
+        val readinessStarted = helper.tick
+        var armedAt: Long? = null
         var archerFired = false
         var skirmisherApproached = false
+        val latestHit = mutableMapOf<UUID, Long>()
+        val hurtEventHit = mutableMapOf<UUID, Long>()
+        val checked190 = mutableMapOf<UUID, Long>()
+        val checked200 = mutableMapOf<UUID, Long>()
+        val preHitArrowIds = mutableSetOf<UUID>()
+        val subscriptions = mutableListOf<Any>()
+        var hurtEvents = 0
+        var droppedHurtEvents = 0
         var retaliationWindowExpired = false
-        helper.onEachTick {
-            archerFired = archerFired || helper.level.getEntitiesOfClass(AbstractArrow::class.java,
-                scouts[1].boundingBox.inflate(35.0)).any { it.owner === scouts[1] }
-            skirmisherApproached = skirmisherApproached || scouts[2].x > base.x + 9.5
-            if (!retaliationWindowExpired && scouts.all { mob ->
-                    helper.level.gameTime - mob.persistentData.getLong("PillagerCampaignsLastHitTick") >= 200L
-                }) {
-                scouts.forEach { mob ->
-                    InvasionRuntime.maintainTarget(mob)
-                    helper.assertTrue(mob.target === primary,
-                        "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must restore its campaign target after 200 game ticks; " +
-                            "target=${mob.target?.let { ForgeRegistries.ENTITY_TYPES.getKey(it.type) }}, " +
-                            "now=${helper.level.gameTime}, lastHit=${mob.persistentData.getLong("PillagerCampaignsLastHitTick")}, " +
-                            "primaryAlive=${primary.isAlive}, primaryOnline=${helper.level.server.playerList.getPlayer(primary.uuid) === primary}")
-                    mob.discard()
-                }
-                attacker.discard()
-                helper.level.server.playerList.remove(primary)
-                channel.finishAndReleaseAll()
-                retaliationWindowExpired = true
-                helper.succeed()
+        fun actorState(entity: net.minecraft.world.entity.Entity): String =
+            "${ForgeRegistries.ENTITY_TYPES.getKey(entity.type)}[uuid=${entity.uuid},pos=${entity.blockPosition()}," +
+                "chunk=${ChunkPos(entity.blockPosition())},registered=${helper.level.getEntity(entity.uuid) === entity}," +
+                "entityTicking=${helper.level.isPositionEntityTicking(entity.blockPosition())}," +
+                "age=${entity.tickCount},alive=${entity.isAlive},removed=${entity.removalReason}," +
+                "noAi=${(entity as? Mob)?.isNoAi},invulnerable=${entity.isInvulnerable},target=${(entity as? Mob)?.target?.uuid}," +
+                "lastAttacker=${entity.persistentData.takeIf { it.hasUUID("PillagerCampaignsLastAttacker") }?.getUUID("PillagerCampaignsLastAttacker")}," +
+                "lastHitPresent=${entity.persistentData.contains("PillagerCampaignsLastHitTick")}," +
+                "lastHit=${entity.persistentData.getLong("PillagerCampaignsLastHitTick")}]"
+        fun state(): String = "testTick=${helper.tick},nativeTick=${helper.level.gameTime},armedAt=$armedAt," +
+            "latestHits=$latestHit,checked190=$checked190,checked200=$checked200," +
+            "primaryOnline=${helper.level.server.playerList.getPlayer(primary.uuid) === primary}," +
+            "primary=${actorState(primary)},attacker=${actorState(attacker)}," +
+            "scouts=${scouts.joinToString { actorState(it) }},arenaBase=$base"
+        fun trace(stage: String) {
+            org.slf4j.LoggerFactory.getLogger("ScoutRetaliationTest").info("Retaliation {}: {}", stage, state())
+        }
+        fun closeTrace() {
+            subscriptions.toList().forEach { MinecraftForge.EVENT_BUS.unregister(it) }
+            subscriptions.clear()
+        }
+        fun check(condition: Boolean, message: String) {
+            if (!condition) { trace("failure"); closeTrace() }
+            helper.assertTrue(condition, "$message; ${state()}")
+        }
+        // Caller audit: the only production recordScoutHit caller is onLivingHurt.
+        // LOWEST observes after that normal-priority handler, including canceled events.
+        val hurtTrace = Consumer<LivingHurtEvent> { event ->
+            if (event.entity.level() === helper.level && scouts.any { it === event.entity && it.uuid == event.entity.uuid }) {
+                if (hurtEvents++ < 128) {
+                    val source = event.source.entity
+                    val direct = event.source.directEntity
+                    val tag = event.entity.persistentData
+                    val tick = helper.level.gameTime
+                    val matches = source != null && tag.hasUUID("PillagerCampaignsLastAttacker") &&
+                        tag.getUUID("PillagerCampaignsLastAttacker") == source.uuid &&
+                        tag.contains("PillagerCampaignsLastHitTick") && tag.getLong("PillagerCampaignsLastHitTick") == tick
+                    if (matches) hurtEventHit[event.entity.uuid] = tick
+                    org.slf4j.LoggerFactory.getLogger("ScoutRetaliationTest").info(
+                        "Retaliation hurt-event: victim={} nativeTick={} testTick={} msgId={} amount={} canceled={} source={} direct={} directOwner={} postHandlerMatched={} postLastHit={} postAttacker={}",
+                        event.entity.uuid, tick, helper.tick, event.source.msgId, event.amount, event.isCanceled,
+                        source?.let(::actorState), direct?.let(::actorState),
+                        (direct as? net.minecraft.world.entity.projectile.Projectile)?.owner?.uuid,
+                        matches, tag.getLong("PillagerCampaignsLastHitTick"),
+                        tag.takeIf { it.hasUUID("PillagerCampaignsLastAttacker") }?.getUUID("PillagerCampaignsLastAttacker"))
+                } else droppedHurtEvents++
             }
         }
-        helper.runAfterDelay(190) {
-            scouts.forEach { mob ->
-                InvasionRuntime.maintainTarget(mob)
-                helper.assertTrue(mob.target === attacker,
-                    "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must keep retaliating before 200 ticks")
+        MinecraftForge.EVENT_BUS.addListener(EventPriority.LOWEST, true, LivingHurtEvent::class.java, hurtTrace)
+        subscriptions.add(hurtTrace)
+        // Public tick cleanup covers the unchanged native timeout without reflecting testInfo.
+        val timeoutTrace = Consumer<TickEvent.ServerTickEvent> { event ->
+            if (event.phase == TickEvent.Phase.END && event.server === helper.level.server && helper.tick >= 340L) {
+                trace("native-timeout-observer-cleanup")
+                closeTrace()
             }
-            helper.assertTrue(archerFired, "The scout archer must fire at its attacker")
-            helper.assertTrue(skirmisherApproached, "The scout skirmisher must turn and pursue its attacker")
+        }
+        MinecraftForge.EVENT_BUS.addListener(EventPriority.LOWEST, false, TickEvent.ServerTickEvent::class.java, timeoutTrace)
+        subscriptions.add(timeoutTrace)
+        trace("spawn-added-before-native-readiness")
+        helper.onEachTick {
+            try {
+                if (!retaliationWindowExpired) {
+                    if (armedAt == null) {
+                        // Successful insertion need not mean UUID visibility or native ticking.
+                        // Let the real online player's own native tickets settle first.
+                        val actors = listOf(primary, attacker) + scouts
+                        val ready = helper.level.server.playerList.getPlayer(primary.uuid) === primary &&
+                            actors.all { entity -> helper.level.getEntity(entity.uuid) === entity &&
+                                helper.level.isPositionEntityTicking(entity.blockPosition()) && entity.tickCount > 0 }
+                        if (ready) {
+                            trace("native-readiness")
+                            preHitArrowIds.addAll(helper.level.getEntitiesOfClass(AbstractArrow::class.java,
+                                scouts[1].boundingBox.inflate(35.0)).filter { it.owner === scouts[1] }.map { it.uuid })
+                            armedAt = helper.level.gameTime
+                            scouts.forEach { mob ->
+                                InvasionRuntime.recordScoutHit(mob, attacker)
+                                latestHit[mob.uuid] = helper.level.gameTime
+                                mob.navigation.moveTo(base.x + 2.5, base.y.toDouble(), base.z + 7.5, 1.0)
+                                InvasionRuntime.maintainTarget(mob)
+                                check(mob.persistentData.getLong("PillagerCampaignsLastHitTick") == armedAt && mob.target === attacker,
+                                    "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must target its attacker while moving away at the actual native hit tick")
+                            }
+                            trace("armed-native-hit")
+                        } else check(helper.tick - readinessStarted < 100L,
+                            "Retaliation actors must become UUID-visible and natively entity-ticking within 100 existing test ticks")
+                    } else {
+                        val now = helper.level.gameTime
+                        archerFired = archerFired || helper.level.getEntitiesOfClass(AbstractArrow::class.java,
+                            scouts[1].boundingBox.inflate(35.0)).any { it.owner === scouts[1] && it.uuid !in preHitArrowIds }
+                        skirmisherApproached = skirmisherApproached || scouts[2].x > base.x + 9.5
+                        scouts.forEach { mob ->
+                            val tag = mob.persistentData
+                            val observed = tag.takeIf { it.contains("PillagerCampaignsLastHitTick") }?.getLong("PillagerCampaignsLastHitTick")
+                            if (observed != null && observed > latestHit.getValue(mob.uuid)) {
+                                check(hurtEventHit[mob.uuid] == observed && tag.hasUUID("PillagerCampaignsLastAttacker") &&
+                                    tag.getUUID("PillagerCampaignsLastAttacker") == attacker.uuid,
+                                    "Every later native re-arm must have a matching actual post-handler LivingHurtEvent source trace")
+                                latestHit[mob.uuid] = observed
+                                trace("actual-hurt-rearmed-${mob.uuid}")
+                            }
+                            val hitTick = latestHit.getValue(mob.uuid)
+                            val elapsed = now - hitTick
+                            if (checked190[mob.uuid] != hitTick && elapsed >= 190L) {
+                                check(elapsed == 190L, "Each pre-expiry oracle must run at exactly 190 native ticks after that mob's most recent hit")
+                                InvasionRuntime.maintainTarget(mob)
+                                check(mob.target === attacker,
+                                    "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must keep retaliating before 200 ticks")
+                                check(archerFired, "The scout archer must fire at its attacker")
+                                check(skirmisherApproached, "The scout skirmisher must turn and pursue its attacker")
+                                checked190[mob.uuid] = hitTick
+                                trace("pre-expiry-190-native-ticks-${mob.uuid}")
+                            }
+                            if (checked200[mob.uuid] != hitTick && elapsed >= 200L) {
+                                check(elapsed == 200L && checked190[mob.uuid] == hitTick,
+                                    "Each expiry oracle must run at exactly 200 native ticks after that mob's most recent hit, after its full 190-tick oracle")
+                                InvasionRuntime.maintainTarget(mob)
+                                check(mob.target === primary,
+                                    "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must restore its campaign target after 200 game ticks")
+                                checked200[mob.uuid] = hitTick
+                                trace("expiry-200-native-ticks-${mob.uuid}")
+                            }
+                        }
+                        if (scouts.all { checked200[it.uuid] == latestHit[it.uuid] }) {
+                            check(droppedHurtEvents == 0, "The bounded actual-hit event trace must not lose observations")
+                            trace("all-latest-native-windows-complete")
+                            closeTrace()
+                            scouts.forEach { it.discard() }
+                            attacker.discard()
+                            helper.level.server.playerList.remove(primary)
+                            channel.finishAndReleaseAll()
+                            retaliationWindowExpired = true
+                            helper.succeed()
+                        }
+                    }
+                }
+            } catch (failure: Throwable) {
+                closeTrace()
+                throw failure
+            }
         }
     }
 
