@@ -23,12 +23,23 @@ import net.minecraftforge.gametest.PrefixGameTestTemplate
 import net.minecraftforge.registries.ForgeRegistries
 import java.util.EnumSet
 import java.util.UUID
+import java.util.function.Consumer
+import net.minecraftforge.common.MinecraftForge
+import net.minecraftforge.event.TickEvent
+import net.minecraftforge.event.entity.EntityLeaveLevelEvent
+import net.minecraftforge.event.entity.living.LivingHurtEvent
+import net.minecraftforge.event.entity.living.LivingDamageEvent
+import net.minecraftforge.event.entity.living.LivingDeathEvent
+import net.minecraftforge.eventbus.api.Event
+import net.minecraftforge.eventbus.api.EventPriority
 
 @GameTestHolder(PillagerCampaignsMod.MOD_ID)
 @PrefixGameTestTemplate(false)
 object CampaignHuntingGameTests {
     private data class Case(val id: String, val crossbow: Boolean = false, val sealed: Boolean = false,
         val moving: Boolean = false, val stationary: Boolean = false)
+
+    private data class Scenario(val frame: (Int) -> Boolean, val close: () -> Unit)
 
     @JvmStatic
     @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "hunting", timeoutTicks = 6500)
@@ -47,15 +58,20 @@ object CampaignHuntingGameTests {
         var elapsed = 0
         var current = scenario(helper, cases[index])
         helper.onEachTick {
-            if (index < cases.size && current(++elapsed)) {
-                index++
-                if (index == cases.size) helper.succeed()
-                else { elapsed = 0; current = scenario(helper, cases[index]) }
+            try {
+                if (index < cases.size && current.frame(++elapsed)) {
+                    index++
+                    if (index == cases.size) helper.succeed()
+                    else { elapsed = 0; current = scenario(helper, cases[index]) }
+                }
+            } catch (failure: Throwable) {
+                current.close()
+                throw failure
             }
         }
     }
 
-    private fun scenario(helper: GameTestHelper, case: Case): (Int) -> Boolean {
+    private fun scenario(helper: GameTestHelper, case: Case): Scenario {
         val (id, crossbow, sealed, moving, stationary) = case
         val base = helper.absolutePos(BlockPos(0, 2, 0))
         for (x in 0..33) for (z in 0..33) {
@@ -100,11 +116,14 @@ object CampaignHuntingGameTests {
         InvasionRuntime.installCombatGoal(mob)
         helper.assertTrue(mob.goalSelector.availableGoals.count { it.goal is CampaignHuntGoal } == 1,
             "Hunting installation must be idempotent")
+        // No subscription exists while setup assertions can fail before Scenario is returned.
+        val deathTrace = CampaignFixtureActorTrace(helper, listOf(mob), 6500L,
+            "hunting:$case authoredArena=${base.offset(0, -1, 0)}..${base.offset(34, 5, 34)}")
         var crossed = false
         var firingPosition = false
         var fired = false
         var borrowedMovement = false
-        return frame@ { elapsed ->
+        return Scenario(frame@ { elapsed ->
             crossed = crossed || mob.x > base.x + 17.0
             firingPosition = firingPosition || (mob is RangedAttackMob &&
                 mob.distanceToSqr(target) <= 256.0 && mob.sensing.hasLineOfSight(target))
@@ -124,6 +143,9 @@ object CampaignHuntingGameTests {
             val diagnostic = "$case pos=${mob.blockPosition()} target=${target.blockPosition()} " +
                 "path=${mob.navigation.path} ticks=${mob.tickCount} removed=${mob.removalReason} " +
                 "goals=${mob.goalSelector.availableGoals.filter { it.isRunning }.map { it.goal.javaClass.simpleName }}"
+            helper.assertTrue(mob.isAlive && !mob.isRemoved,
+                "Hunting motion/combat oracle requires its original living, nonremoved hunter: $diagnostic; ${deathTrace.state(mob)}")
+            helper.assertTrue(!deathTrace.truncated, "Hunting damage/death observations must fit the bounded trace")
             if (moving) helper.assertTrue(mob.distanceToSqr(target) < 16.0,
                 "Hunter must reacquire a moving target behind a second obstruction: $diagnostic")
             helper.assertTrue(sealed || stationary || crossed || firingPosition,
@@ -134,11 +156,91 @@ object CampaignHuntingGameTests {
             if (sealed) helper.assertTrue(helper.level.getBlockState(base.offset(16, 0, 16)).`is`(Blocks.STONE), "Defense must remain intact")
             helper.level.getEntitiesOfClass(AbstractArrow::class.java, mob.boundingBox.inflate(40.0))
                 .filter { it.owner === mob }.forEach { it.discard() }
+            deathTrace.note("case-owned-success-cleanup")
             mob.discard()
+            deathTrace.close()
             helper.level.server.playerList.remove(target)
             channel.finishAndReleaseAll()
             org.slf4j.LoggerFactory.getLogger("CampaignHuntingTest").info("Hunting case passed: {}", case)
             true
+        }, deathTrace::close)
+    }
+}
+
+/** Read-only diagnostics for these two campaign fixtures, never a production observer. */
+internal class CampaignFixtureActorTrace(
+    private val helper: GameTestHelper,
+    private val actors: List<Mob>,
+    private val timeout: Long,
+    private val context: String,
+) {
+    private val subscriptions = mutableListOf<Any>()
+    private var observations = 0
+    var truncated = false
+        private set
+    private val origin = helper.absolutePos(BlockPos.ZERO)
+    private val templateBounds = net.minecraft.world.phys.AABB(origin.x.toDouble(), origin.y.toDouble(), origin.z.toDouble(),
+        origin.x + 34.0, origin.y + 2.0, origin.z + 34.0)
+
+    fun state(entity: net.minecraft.world.entity.Entity): String =
+        "${ForgeRegistries.ENTITY_TYPES.getKey(entity.type)}[uuid=${entity.uuid},id=${entity.id},pos=${entity.position()},bbox=${entity.boundingBox}," +
+            "health=${(entity as? net.minecraft.world.entity.LivingEntity)?.health},maxHealth=${(entity as? net.minecraft.world.entity.LivingEntity)?.maxHealth}," +
+            "alive=${entity.isAlive},removed=${entity.removalReason},age=${entity.tickCount}," +
+            "level=${entity.level().dimension().location()},chunk=${net.minecraft.world.level.ChunkPos(entity.blockPosition())}," +
+            "loaded=${helper.level.chunkSource.getChunkNow(entity.blockX shr 4, entity.blockZ shr 4) != null}," +
+            "registered=${helper.level.getEntity(entity.uuid) === entity},ticking=${helper.level.isPositionEntityTicking(entity.blockPosition())}," +
+            "campaign=${InvasionRuntime.invasionId(entity)},target=${(entity as? Mob)?.target?.uuid}]"
+
+    private fun accepts(entity: net.minecraft.world.entity.Entity) =
+        entity.level() === helper.level && actors.any { it === entity && it.uuid == entity.uuid }
+
+    private fun observe(kind: String, entity: net.minecraft.world.entity.Entity, event: Event?,
+        source: net.minecraft.world.damagesource.DamageSource? = null, amount: Float? = null) {
+        if (!accepts(entity)) return
+        if (observations++ >= 128) {
+            if (!truncated) org.slf4j.LoggerFactory.getLogger("CampaignFixtureDeathTrace").warn("Actor trace overflow: {}", context)
+            truncated = true
+            return
         }
+        val stack = StackWalker.getInstance().walk { frames ->
+            frames.limit(32).map { "${it.className}#${it.methodName}:${it.lineNumber}" }.toList().joinToString(" <- ")
+        }
+        org.slf4j.LoggerFactory.getLogger("CampaignFixtureDeathTrace").info(
+            "Actor event={} context={} nativeTick={} testTick={} declaredTemplateBounds={} actor={} msgId={} amount={} canceled={} source={} direct={} owner={} stack={}",
+            kind, context, helper.level.gameTime, helper.tick, templateBounds, state(entity), source?.msgId, amount,
+            event?.let { it.isCancelable && it.isCanceled }, source?.entity?.let(::state), source?.directEntity?.let(::state),
+            (source?.directEntity as? net.minecraft.world.entity.projectile.Projectile)?.owner?.let(::state), stack)
+    }
+
+    fun note(kind: String) { actors.forEach { observe(kind, it, null) } }
+
+    init {
+        val hurt = Consumer<LivingHurtEvent> { observe("hurt", it.entity, it, it.source, it.amount) }
+        val damage = Consumer<LivingDamageEvent> { observe("final-damage", it.entity, it, it.source, it.amount) }
+        val death = Consumer<LivingDeathEvent> { observe("death", it.entity, it, it.source) }
+        val leave = Consumer<EntityLeaveLevelEvent> { observe("leave", it.entity, it) }
+        val guard = Consumer<TickEvent.ServerTickEvent> {
+            if (it.phase == TickEvent.Phase.END && it.server === helper.level.server && helper.tick >= timeout) {
+                try { note("timeout-observer-cleanup") } finally { close() }
+            }
+        }
+        // Track every listener before registration so even a partial addListener failure rolls back.
+        subscriptions.addAll(listOf(hurt, damage, death, leave, guard))
+        try {
+            MinecraftForge.EVENT_BUS.addListener(EventPriority.LOWEST, true, LivingHurtEvent::class.java, hurt)
+            MinecraftForge.EVENT_BUS.addListener(EventPriority.LOWEST, true, LivingDamageEvent::class.java, damage)
+            MinecraftForge.EVENT_BUS.addListener(EventPriority.LOWEST, true, LivingDeathEvent::class.java, death)
+            MinecraftForge.EVENT_BUS.addListener(EventPriority.LOWEST, false, EntityLeaveLevelEvent::class.java, leave)
+            MinecraftForge.EVENT_BUS.addListener(EventPriority.LOWEST, false, TickEvent.ServerTickEvent::class.java, guard)
+            note("observer-start")
+        } catch (failure: Throwable) {
+            close()
+            throw failure
+        }
+    }
+
+    fun close() {
+        subscriptions.toList().forEach { MinecraftForge.EVENT_BUS.unregister(it) }
+        subscriptions.clear()
     }
 }

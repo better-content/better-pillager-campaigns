@@ -138,6 +138,8 @@ object PillagerCampaignsGameTests {
                 mob.target = primary
                 mob
             }
+        val deathTrace = CampaignFixtureActorTrace(helper, scouts, 340L,
+            "scout-retaliation authoredArena=${base.offset(0, -1, 0)}..${base.offset(29, 2, 15)}")
         val readinessStarted = helper.tick
         var armedAt: Long? = null
         var archerFired = false
@@ -169,12 +171,22 @@ object PillagerCampaignsGameTests {
             org.slf4j.LoggerFactory.getLogger("ScoutRetaliationTest").info("Retaliation {}: {}", stage, state())
         }
         fun closeTrace() {
+            deathTrace.close()
             subscriptions.toList().forEach { MinecraftForge.EVENT_BUS.unregister(it) }
             subscriptions.clear()
         }
         fun check(condition: Boolean, message: String) {
             if (!condition) { trace("failure"); closeTrace() }
             helper.assertTrue(condition, "$message; ${state()}")
+        }
+        fun checkNativeActors(stage: String) {
+            (listOf(primary, attacker) + scouts).forEach { entity ->
+                check(entity.isAlive && !entity.isRemoved && helper.level.getEntity(entity.uuid) === entity &&
+                    helper.level.isPositionEntityTicking(entity.blockPosition()) && entity.tickCount > 0,
+                    "$stage requires every original actor living, nonremoved, UUID-identical and natively ticking: ${deathTrace.state(entity)}")
+            }
+            check(helper.level.server.playerList.getPlayer(primary.uuid) === primary,
+                "$stage requires the same real online primary player")
         }
         // Caller audit: the only production recordScoutHit caller is onLivingHurt.
         // LOWEST observes after that normal-priority handler, including canceled events.
@@ -256,6 +268,7 @@ object PillagerCampaignsGameTests {
                             val elapsed = now - hitTick
                             if (checked190[mob.uuid] != hitTick && elapsed >= 190L) {
                                 check(elapsed == 190L, "Each pre-expiry oracle must run at exactly 190 native ticks after that mob's most recent hit")
+                                checkNativeActors("190-native-tick retaliation oracle")
                                 InvasionRuntime.maintainTarget(mob)
                                 check(mob.target === attacker,
                                     "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must keep retaliating before 200 ticks")
@@ -267,6 +280,7 @@ object PillagerCampaignsGameTests {
                             if (checked200[mob.uuid] != hitTick && elapsed >= 200L) {
                                 check(elapsed == 200L && checked190[mob.uuid] == hitTick,
                                     "Each expiry oracle must run at exactly 200 native ticks after that mob's most recent hit, after its full 190-tick oracle")
+                                checkNativeActors("200-native-tick retaliation oracle")
                                 InvasionRuntime.maintainTarget(mob)
                                 check(mob.target === primary,
                                     "${ForgeRegistries.ENTITY_TYPES.getKey(mob.type)} must restore its campaign target after 200 game ticks")
@@ -275,7 +289,8 @@ object PillagerCampaignsGameTests {
                             }
                         }
                         if (scouts.all { checked200[it.uuid] == latestHit[it.uuid] }) {
-                            check(droppedHurtEvents == 0, "The bounded actual-hit event trace must not lose observations")
+                            check(droppedHurtEvents == 0 && !deathTrace.truncated,
+                                "The bounded actual-hit and death event traces must not lose observations")
                             trace("all-latest-native-windows-complete")
                             closeTrace()
                             scouts.forEach { it.discard() }
