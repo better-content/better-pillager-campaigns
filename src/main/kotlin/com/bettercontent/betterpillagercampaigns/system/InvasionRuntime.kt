@@ -98,16 +98,16 @@ object InvasionRuntime {
         pathValidator: (Mob, BlockPos, StrategicFrontier) -> Boolean = ::pathMatchesFrontier,
     ): Boolean {
         val server = level.server
-        if (!freshTargetEligible(target) || target.serverLevel() !== level) return false
+        if (!freshTargetEligible(target) || target.serverLevel() !== level) return rejected("target_ineligible")
         val anchor = effect.anchor?.takeIf { it.dimension == level.dimension().location().toString() } ?: return false
         val anchorPos = BlockPos(anchor.x, anchor.y, anchor.z)
         val targetPos = target.blockPosition()
-        if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) return false
+        if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) return rejected("unloaded_approach")
         val existing = liveMembers(server, effect.invasionId).associateBy { it.persistentData.getString(MEMBER_TAG) }
         val missing = effect.members.filter { it.memberId !in existing }
         if (missing.isEmpty()) return true
         val positions = SurfaceGridSampler.memberPositions(level, anchorPos, missing.size)
-        if (positions.size != missing.size) return false
+        if (positions.size != missing.size) return rejected("insufficient_positions")
 
         val prepared = missing.zip(positions).mapNotNull { (member, pos) ->
             val type = ResourceLocation.tryParse(member.recruitId)?.let(ForgeRegistries.ENTITY_TYPES::getValue)
@@ -136,21 +136,21 @@ object InvasionRuntime {
                 }
                 mob
             }.getOrElse { error ->
-                PillagerCampaignsMod.LOGGER.debug("Rejected campaign recruit {} at {}: {}", member.recruitId, pos, error.message)
+                outcome("rejected", "recruit_preparation_failed")
                 mob.discard()
                 null
             }
         }
         if (prepared.size != missing.size || !SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) {
             prepared.forEach(Entity::discard)
-            return false
+            return rejected("preparation_rollback")
         }
         val spawned = mutableListOf<Mob>()
         val validationLead = prepared.firstOrNull().takeIf { effect.validateApproach }
         if (validationLead != null) {
             if (!level.addFreshEntity(validationLead)) {
                 prepared.forEach(Entity::discard)
-                return false
+                return rejected("lead_insertion_denied")
             }
             spawned += validationLead
             // The candidate was just proven to have a solid floor; a freshly added mob has not
@@ -158,12 +158,8 @@ object InvasionRuntime {
             validationLead.setOnGround(true)
             if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos) ||
                 !pathValidator(validationLead, targetPos, effect.strategicFrontier)) {
-                PillagerCampaignsMod.LOGGER.info(
-                    "Rejected campaign packet {} because its {} frontier did not match the lead path to {}",
-                    effect.invasionId, effect.strategicFrontier, targetPos,
-                )
                 prepared.forEach(Entity::discard)
-                return false
+                return rejected("frontier_rollback")
             }
         }
         prepared.asSequence().filter { it !== validationLead }.forEach { mob ->
@@ -171,19 +167,30 @@ object InvasionRuntime {
             else {
                 spawned.forEach(Entity::discard)
                 prepared.filter { it !in spawned }.forEach(Entity::discard)
-                return false
+                return rejected("member_insertion_rollback")
             }
         }
         if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) {
             spawned.forEach(Entity::discard)
-            return false
+            return rejected("loaded_boundary_rollback")
         }
         synchronized(spawnTicks) { repeat(spawned.size) { spawnTicks.addLast(server.overworld().gameTime) } }
-        PillagerCampaignsMod.LOGGER.info("Materialized {} {} wave {} packet with {} members for {}",
-            effect.encounterKind.name.lowercase(), effect.invasionId, effect.waveIndex, spawned.size, target.scoreboardName)
+        val log = com.bettercontent.betterpillagercampaigns.PlaytestDiagnostics.LOG
+        if (log.enabled("materialization")) com.bettercontent.betterpillagercampaigns.diagnostics.FeatureTelemetry.packet(
+            log, effect.invasionId, effect.waveIndex, spawned.size, effect.effectId)
         net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
             com.bettercontent.betterpillagercampaigns.api.CampaignMaterializedEvent(target, effect.invasionId, effect.waveIndex, spawned.size))
         return true
+    }
+
+    private fun outcome(result: String, reason: String) {
+        val log = com.bettercontent.betterpillagercampaigns.PlaytestDiagnostics.LOG
+        if (log.enabled("materialization")) log.event("materialization", "campaign.packet", "server", result, reason, null)
+    }
+
+    private fun rejected(reason: String): Boolean {
+        outcome("rejected", reason)
+        return false
     }
 
     private fun pathMatchesFrontier(mob: Mob, target: BlockPos, frontier: StrategicFrontier): Boolean {

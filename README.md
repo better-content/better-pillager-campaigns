@@ -1,5 +1,16 @@
 # Better Pillager Campaigns
 
+## Playtest logging
+
+`bc.playtest.better_pillager_campaigns.materialization` records existing preparation, target,
+loaded-approach, frontier, native-insertion and rollback outcomes. Successful packets correlate
+existing invasion/effect IDs and wave/member counts, never player names or route payloads.
+No extra path search, RNG draw or native entity is created for a record. DEBUG/TRACE share
+120/minute (burst 20), 256 keys and 2,048-character records, with 30-second summaries. Startup INFO
+reports effective common-config enablement and loaded version/mode/limits; unavailable source
+identity is `UNKNOWN`. Stop/disconnect clears transient keys without rearming process allowances.
+Pure emitter/contracts supplement native campaign materialization/frontier assertions.
+
 ## Scope and authority
 
 This repository owns its mod-specific behavior and authoring inputs. Read [local instructions](AGENTS.md)
@@ -27,7 +38,7 @@ Java 17 and the checked-in Gradle wrapper are required.
 ./gradlew -q :runner:run --args='mvp /path/to/invasion-runtime-spec.json build/invasion-readiness'
 ```
 
-`verifyFast` includes the fixed 1,024-seed policy corpus. `verifyFull` adds headless Forge GameTests, and `verifyWorld` runs those tests with the exact It Takes a Pillage and Savage & Ravage runtime dependencies.
+`verifyFast` includes the fixed 1,024-seed policy corpus. `verifyFull` adds the authored-roster headless Forge GameTests with the pinned It Takes a Pillage, Savage & Ravage and Blueprint runtime dependencies. `verifyWorld` names that same `headlessGameTest` task graph rather than a second distinct fixture or absent-provider profile; invoking both gates together deduplicates the native task.
 
 ## Interactive campaign harness
 
