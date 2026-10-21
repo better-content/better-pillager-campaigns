@@ -98,16 +98,16 @@ object InvasionRuntime {
         pathValidator: (Mob, BlockPos, StrategicFrontier) -> Boolean = ::pathMatchesFrontier,
     ): Boolean {
         val server = level.server
-        if (!freshTargetEligible(target) || target.serverLevel() !== level) return rejected("target_ineligible")
+        if (!freshTargetEligible(target) || target.serverLevel() !== level) return rejected(level, effect, "target_ineligible")
         val anchor = effect.anchor?.takeIf { it.dimension == level.dimension().location().toString() } ?: return false
         val anchorPos = BlockPos(anchor.x, anchor.y, anchor.z)
         val targetPos = target.blockPosition()
-        if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) return rejected("unloaded_approach")
+        if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) return rejected(level, effect, "unloaded_approach")
         val existing = liveMembers(server, effect.invasionId).associateBy { it.persistentData.getString(MEMBER_TAG) }
         val missing = effect.members.filter { it.memberId !in existing }
         if (missing.isEmpty()) return true
         val positions = SurfaceGridSampler.memberPositions(level, anchorPos, missing.size)
-        if (positions.size != missing.size) return rejected("insufficient_positions")
+        if (positions.size != missing.size) return rejected(level, effect, "insufficient_positions")
 
         val prepared = missing.zip(positions).mapNotNull { (member, pos) ->
             val type = ResourceLocation.tryParse(member.recruitId)?.let(ForgeRegistries.ENTITY_TYPES::getValue)
@@ -136,21 +136,21 @@ object InvasionRuntime {
                 }
                 mob
             }.getOrElse { error ->
-                outcome("rejected", "recruit_preparation_failed")
+                rejected(level, effect, "recruit_preparation_failed")
                 mob.discard()
                 null
             }
         }
         if (prepared.size != missing.size || !SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) {
             prepared.forEach(Entity::discard)
-            return rejected("preparation_rollback")
+            return rejected(level, effect, "preparation_rollback")
         }
         val spawned = mutableListOf<Mob>()
         val validationLead = prepared.firstOrNull().takeIf { effect.validateApproach }
         if (validationLead != null) {
             if (!level.addFreshEntity(validationLead)) {
                 prepared.forEach(Entity::discard)
-                return rejected("lead_insertion_denied")
+                return rejected(level, effect, "lead_insertion_denied")
             }
             spawned += validationLead
             // The candidate was just proven to have a solid floor; a freshly added mob has not
@@ -159,7 +159,7 @@ object InvasionRuntime {
             if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos) ||
                 !pathValidator(validationLead, targetPos, effect.strategicFrontier)) {
                 prepared.forEach(Entity::discard)
-                return rejected("frontier_rollback")
+                return rejected(level, effect, "frontier_rollback")
             }
         }
         prepared.asSequence().filter { it !== validationLead }.forEach { mob ->
@@ -167,12 +167,12 @@ object InvasionRuntime {
             else {
                 spawned.forEach(Entity::discard)
                 prepared.filter { it !in spawned }.forEach(Entity::discard)
-                return rejected("member_insertion_rollback")
+                return rejected(level, effect, "member_insertion_rollback")
             }
         }
         if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) {
             spawned.forEach(Entity::discard)
-            return rejected("loaded_boundary_rollback")
+            return rejected(level, effect, "loaded_boundary_rollback")
         }
         synchronized(spawnTicks) { repeat(spawned.size) { spawnTicks.addLast(server.overworld().gameTime) } }
         val log = com.bettercontent.betterpillagercampaigns.PlaytestDiagnostics.LOG
@@ -183,13 +183,11 @@ object InvasionRuntime {
         return true
     }
 
-    private fun outcome(result: String, reason: String) {
+    private fun rejected(level: ServerLevel, effect: DirectorEffect, reason: String): Boolean {
         val log = com.bettercontent.betterpillagercampaigns.PlaytestDiagnostics.LOG
-        if (log.enabled("materialization")) log.event("materialization", "campaign.packet", "server", result, reason, null)
-    }
-
-    private fun rejected(reason: String): Boolean {
-        outcome("rejected", reason)
+        if (log.enabled("materialization")) com.bettercontent.betterpillagercampaigns.diagnostics.FeatureTelemetry.rejected(log,
+            com.bettercontent.betterpillagercampaigns.diagnostics.PlaytestLog.Context.server(level.dimension().location().toString(), level.gameTime),
+            effect.invasionId, effect.waveIndex, effect.effectId, reason)
         return false
     }
 

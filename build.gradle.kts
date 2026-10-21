@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.gradle.api.tasks.SourceSetContainer
 import groovy.json.JsonSlurper
 import java.util.Properties
+import java.util.UUID
 
 plugins {
     idea
@@ -42,6 +43,9 @@ kotlin {
     jvmToolchain(17)
 }
 
+// Nonshipping source fixture identity, never a gameplay/diagnostic correlation ID.
+val nativeGameTestDirectory = layout.buildDirectory.dir("gametest/${UUID.randomUUID()}").get().asFile
+
 minecraft {
     mappings("official", minecraftVersion)
     copyIdeResources = true
@@ -72,6 +76,7 @@ minecraft {
             arg("--nogui")
         }
         create("gameTestServer") {
+            workingDirectory(nativeGameTestDirectory)
             property("mixin.env.remapRefMap", "true")
             property("mixin.env.refMapRemappingFile", file("build/createSrgToMcp/output.srg").absolutePath)
         }
@@ -152,7 +157,7 @@ tasks.named<Jar>("sourcesJar") {
 
 val syncGameTestStructures by tasks.registering(Copy::class) {
     from("gameteststructures")
-    into(layout.projectDirectory.dir("run/gameteststructures"))
+    into(nativeGameTestDirectory.resolve("gameteststructures"))
 }
 
 val verifyGameTestFixtureProfile by tasks.registering {
@@ -183,14 +188,19 @@ val verifyGameTestFixtureProfile by tasks.registering {
 val prepareGameTestFixtureProfile by tasks.registering(Copy::class) {
     dependsOn(verifyGameTestFixtureProfile)
     from(layout.projectDirectory.file("gametest/server.properties"))
-    into(layout.projectDirectory.dir("run"))
-    // Main rewrites defaults; never let an older NORMAL profile survive a native invocation.
+    into(nativeGameTestDirectory)
+    // Fresh UUID fixture only; ordinary developer settings are never replaced.
     outputs.upToDateWhen { false }
 }
 
-val cleanGameTestWorld by tasks.registering(Delete::class) {
+val cleanGameTestWorld by tasks.registering {
+    description = "Compatibility fixture preparation: requires a fresh native world and deletes nothing."
     dependsOn(prepareGameTestFixtureProfile)
-    delete(layout.projectDirectory.dir("run/world"))
+    doLast {
+        check(!nativeGameTestDirectory.resolve("world").exists()) {
+            "Native GameTest must use a fresh UUID fixture; existing worlds are retained, never deleted"
+        }
+    }
 }
 
 val prepareCampaignHarness by tasks.registering(Copy::class) {
@@ -313,6 +323,8 @@ tasks.register("verifyFast") {
     dependsOn(":invasion-core:check")
     dependsOn(":runner:test")
 }
+
+apply(from = "gradle/native-gametest-fixture.gradle")
 
 tasks.register("verifyFull") {
     group = "verification"

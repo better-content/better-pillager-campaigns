@@ -4,7 +4,10 @@
 
 `bc.playtest.better_pillager_campaigns.materialization` records existing preparation, target,
 loaded-approach, frontier, native-insertion and rollback outcomes. Successful packets correlate
-existing invasion/effect IDs and wave/member counts, never player names or route payloads.
+existing invasion/effect IDs and wave/member counts. Rejections carry the same available
+invasion/effect/wave identity plus native dimension/game tick, including frontier/insertion rollback;
+these identities are native domain operations, not new diagnostic IDs. No player names, seeds or
+route payloads are logged.
 No extra path search, RNG draw or native entity is created for a record. DEBUG/TRACE share
 120/minute (burst 20), 256 keys and 2,048-character records, with 30-second summaries. Startup INFO
 reports effective common-config enablement and loaded version/mode/limits; unavailable source
@@ -39,6 +42,13 @@ Java 17 and the checked-in Gradle wrapper are required.
 ```
 
 `verifyFast` includes the fixed 1,024-seed policy corpus. `verifyFull` adds the authored-roster headless Forge GameTests with the pinned It Takes a Pillage, Savage & Ravage and Blueprint runtime dependencies. `verifyWorld` names that same `headlessGameTest` task graph rather than a second distinct fixture or absent-provider profile; invoking both gates together deduplicates the native task.
+
+Native source gates use a fresh nonshipping `build/gametest/<uuid>` directory in the actual
+ForgeGradle RunConfig. Structures and the unchanged authored flat-world profile are staged only
+there; ordinary developer `run` and interactive harness inputs remain untouched. The compatibility
+`cleanGameTestWorld` task prepares a fresh fixture and deletes nothing. `verifyFast` includes
+isolated-directory, absent-only settings/preservation and synthetic severity negative controls;
+actual latest/debug ERROR/FATAL fails the native gate. Retain complete build trees/evidence.
 
 ## Interactive campaign harness
 
