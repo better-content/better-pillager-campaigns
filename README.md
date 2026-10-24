@@ -14,11 +14,7 @@ reports effective common-config enablement and loaded version/mode/limits; unava
 identity is `UNKNOWN`. Stop/disconnect clears transient keys without rearming process allowances.
 Pure emitter/contracts supplement native campaign materialization/frontier assertions.
 
-## Scope and authority
-
-This repository owns its mod-specific behavior and authoring inputs. Read [local instructions](AGENTS.md)
-and the [shared documentation/policy index](../../better-content-modpack/docs/README.md).
-
+## Scope
 
 Better Pillager Campaigns is a server-side Minecraft Forge mod for Minecraft 1.20.1. It supplies frequent overland scout pressure and sparse, warned pillager assaults for Survival players.
 
