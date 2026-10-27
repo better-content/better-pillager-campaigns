@@ -693,6 +693,90 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_concurrent", timeoutTicks = 200)
+    fun threeSeparatedEncountersRetryAndRemainConcurrent(helper: GameTestHelper) {
+        // Headless native participants exercise server materialization, not client transport.
+        val bases = (0..2).map { helper.absolutePos(BlockPos(1 + it * 512, 2, 1)) }
+        val tickets = bases.flatMap { base ->
+            listOf(base, base.offset(14, 0, 0), base.offset(0, 0, 14), base.offset(14, 0, 14)).map(::ChunkPos)
+        }.distinct()
+        tickets.forEach { helper.level.chunkSource.addRegionTicket(TicketType.FORCED, it, 2, it) }
+        val players = bases.mapIndexed { index, base ->
+            buildSurface(helper, base)
+            for (z in 6..8) for (y in 0..1)
+                helper.level.setBlockAndUpdate(base.offset(7, y, z), Blocks.STONE.defaultBlockState())
+            fake(helper, "concurrent-$index").also { player ->
+                player.setGameMode(GameType.SURVIVAL)
+                player.moveTo(base.x + 11.5, base.y.toDouble(), base.z + 7.5)
+                establishPresence(player, BlockPoint("minecraft:overworld", player.blockX, player.blockY, player.blockZ))
+            }
+        }
+        // Remote arenas are outside the template's implicit tickets. Wait for actual native
+        // visibility before spawning; a successful insertion into a hidden chunk is not proof.
+        helper.startSequence().thenWaitUntil {
+            bases.forEach { base -> helper.assertTrue(helper.level.isPositionEntityTicking(base.offset(9, 0, 7)) &&
+                helper.level.isPositionEntityTicking(base.offset(11, 0, 7)), "All remote approaches must be natively entity-ticking") }
+        }.thenExecute {
+        helper.assertTrue(players.all { InvasionRuntime.freshTargetEligible(it) },
+            "All three native Survival targets must satisfy production familiarity and admission")
+        val observations = players.map { player -> PlayerObservation(player.uuid.toString(), true, true, true,
+            BlockPoint("minecraft:overworld", player.blockX, player.blockY, player.blockZ)) }
+        val rules = InvasionRules(scoutWindowMinTicks = 0, scoutWindowMaxTicks = 0,
+            approachMinimumBlocks = 2, approachMaximumBlocks = 4, approachTargetRadiusBlocks = 1,
+            strategicOriginMinimumBlocks = 5, strategicOriginMaximumBlocks = 6)
+        val director = InvasionDirector.create(183, InvasionRuntimeSpec.create(rules,
+            listOf(RecruitSpec("minecraft:pillager", 2, 0, RecruitRole.RANGED))))
+        director.transition(DirectorFrame(0, commands = observations.map {
+            DirectorCommand.Force(it.playerId, EncounterKind.SCOUT, expediteTravel = true)
+        }))
+        director.transition(DirectorFrame(0, players = observations))
+        fun routes(reachable: Boolean) = observations.mapIndexed { index, observation ->
+            val invasion = director.snapshot().tracks.getValue(observation.playerId).invasion!!
+            val pos = bases[index].offset(if (reachable) 9 else 3, 0, 7)
+            StrategicRouteObservation(observation.playerId, invasion.invasionId, observation.position!!,
+                if (reachable) 2 else 1, listOf(
+                    BlockPoint("minecraft:overworld", pos.x + (if (reachable) 3 else -3), pos.y, pos.z),
+                    BlockPoint("minecraft:overworld", pos.x, pos.y, pos.z)), StrategicFrontier.OPEN)
+        }
+        val rejected = director.transition(DirectorFrame(0, players = observations, strategicRoutes = routes(false)))
+            .effects.filter { it.kind == EffectKind.MATERIALIZE }
+        helper.assertTrue(rejected.size == 3, "All separated eligible targets must receive independent encounters")
+        director.transition(DirectorFrame(0, effectResults = rejected.map { effect ->
+            val player = players.single { it.uuid.toString() == effect.playerId }
+            helper.assertTrue(!materializeFixture(helper, player, effect), "Closed loaded routes must fail exact navigation")
+            EffectResult(effect.effectId, false)
+        }))
+        rejected.forEach { effect -> helper.assertTrue(
+            director.snapshot().tracks.getValue(effect.playerId).invasion!!.usedAnchors.contains(effect.anchor),
+            "Every encounter must retain its own failed anchor") }
+        val retried = director.transition(DirectorFrame(rules.normalPacketSpacingTicks, players = observations,
+            strategicRoutes = routes(true))).effects.filter { it.kind == EffectKind.MATERIALIZE }
+        helper.assertTrue(retried.size == 3, "All three encounters must retry through the production director")
+        retried.forEach { effect ->
+            helper.assertTrue(materializeFixture(helper, players.single { it.uuid.toString() == effect.playerId }, effect),
+                "Each same-side loaded retry must materialize")
+        }
+        director.transition(DirectorFrame(0, players = observations,
+            effectResults = retried.map { EffectResult(it.effectId, true) },
+            liveCampaignMobs = InvasionRuntime.liveCampaignPopulation(helper.level.server)))
+        helper.assertTrue(observations.all { director.snapshot().tracks.getValue(it.playerId).invasion?.phase == InvasionPhase.ACTIVE },
+            "All three production Director encounters must be active together after native acknowledgements")
+        helper.assertTrue(retried.map { it.invasionId }.toSet().size == 3, "Concurrent encounter IDs must be distinct")
+        retried.forEach { effect ->
+            val target = players.single { it.uuid.toString() == effect.playerId }
+            val members = InvasionRuntime.liveMembers(helper.level.server, effect.invasionId)
+            helper.assertTrue(members.size == effect.members.size && members.isNotEmpty() &&
+                members.all { it.target === target && it.isAlive && !it.isRemoved },
+                "All encounters must coexist with their own living members and exact target: " +
+                    "id=${effect.invasionId},planned=${effect.members.size},actual=${members.size}," +
+                    "targets=${members.map { it.target?.uuid }},expected=${target.uuid}")
+        }
+        retried.forEach { InvasionRuntime.retire(helper.level.server, it.invasionId) }
+        tickets.forEach { helper.level.chunkSource.removeRegionTicket(TicketType.FORCED, it, 2, it) }
+        }.thenSucceed()
+    }
+
+    @JvmStatic
     @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_schedule", timeoutTicks = 200)
     fun twelveScheduledAssaultsCompleteThroughRealForgeMaterialization(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
