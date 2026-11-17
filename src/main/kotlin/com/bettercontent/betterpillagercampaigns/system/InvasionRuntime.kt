@@ -5,6 +5,10 @@ import com.bettercontent.betterpillagercampaigns.core.DirectorEffect
 import com.bettercontent.betterpillagercampaigns.core.EffectKind
 import com.bettercontent.betterpillagercampaigns.core.EffectResult
 import com.bettercontent.betterpillagercampaigns.core.StrategicFrontier
+import com.bettercontent.betterpillagercampaigns.data.PillagerWorldData
+import com.bettercontent.gameplaynotices.GameplayNotice
+import com.bettercontent.gameplaynotices.GameplayNotices
+import com.bettercontent.gameplaynotices.NoticeTheme
 import net.minecraft.core.BlockPos
 import net.minecraft.nbt.CompoundTag
 import net.minecraft.network.chat.Component
@@ -15,12 +19,15 @@ import net.minecraft.server.level.ServerPlayer
 import net.minecraft.sounds.SoundEvents
 import net.minecraft.sounds.SoundSource
 import net.minecraft.world.entity.Entity
+import net.minecraft.world.entity.EquipmentSlot
 import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.entity.Mob
 import net.minecraft.world.entity.MobSpawnType
 import net.minecraft.world.entity.SpawnGroupData
 import net.minecraft.world.entity.monster.PatrollingMonster
 import net.minecraft.world.entity.monster.Pillager
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.Items
 import net.minecraft.world.level.GameType
 import net.minecraft.world.level.Level
 import net.minecraftforge.registries.ForgeRegistries
@@ -62,7 +69,8 @@ object InvasionRuntime {
         val recipients = warningPlayerIds(effect).mapNotNull { player(server, it) }
         recipients.forEach { player ->
             player.playNotifySound(SoundEvents.RAID_HORN.get(), SoundSource.HOSTILE, 1.1f, 0.85f)
-            player.displayClientMessage(Component.literal("A pillager assault is forming. You have two minutes."), true)
+            GameplayNotices.send(player, GameplayNotice("campaign:${effect.invasionId}:warning", NoticeTheme.COMBAT,
+                Component.literal("Pillager assault forming"), Component.literal("You have two minutes.")))
         }
         return recipients.isNotEmpty()
     }
@@ -73,7 +81,8 @@ object InvasionRuntime {
         else "A pillager scouting party has arrived."
         warningPlayerIds(effect).mapNotNull { player(server, it) }.forEach { recipient ->
             recipient.playNotifySound(SoundEvents.RAID_HORN.get(), SoundSource.HOSTILE, 0.85f, 1.05f)
-            recipient.displayClientMessage(Component.literal(message), true)
+            GameplayNotices.send(recipient, GameplayNotice("campaign:${effect.invasionId}:wave:${effect.waveIndex}",
+                NoticeTheme.COMBAT, Component.literal(message), Component.literal("Defend your position.")))
         }
     }
 
@@ -109,8 +118,16 @@ object InvasionRuntime {
         val positions = SurfaceGridSampler.memberPositions(level, anchorPos, missing.size)
         if (positions.size != missing.size) return rejected(level, effect, "insufficient_positions")
 
+        // Resolve the persisted encounter tier rather than inferring it from wave index: later
+        // intensity tiers also have a first wave, and retries keep the same saved invasion.
+        val firstTier = PillagerWorldData.get(server).snapshot().tracks[effect.playerId]?.invasion
+            ?.takeIf { it.invasionId == effect.invasionId }?.intensity == 0
         val prepared = missing.zip(positions).mapNotNull { (member, pos) ->
-            val type = ResourceLocation.tryParse(member.recruitId)?.let(ForgeRegistries.ENTITY_TYPES::getValue)
+            // Old saved tier-zero waves can still reference an archer from the previous roster.
+            // Materialize that member as a native-crossbow pillager without changing saved IDs.
+            val recruitId = if (firstTier && member.recruitId == "takesapillage:archer")
+                "minecraft:pillager" else member.recruitId
+            val type = ResourceLocation.tryParse(recruitId)?.let(ForgeRegistries.ENTITY_TYPES::getValue)
                 ?: return@mapNotNull null
             val mob = type.create(level) as? Mob ?: return@mapNotNull null
             runCatching {
@@ -126,7 +143,16 @@ object InvasionRuntime {
                 mob.persistentData.putString(KIND_TAG, effect.encounterKind.name.lowercase())
                 mob.persistentData.putInt(WAVE_TAG, effect.waveIndex)
                 mob.target = target
-                if (ModList.get().isLoaded("tconstruct")) {
+                if (firstTier) {
+                    // Early recruits use native combat, not randomized TCon materials or
+                    // armor inherited from optional recruits' finalizeSpawn equipment.
+                    EquipmentSlot.values().filter { it.type == EquipmentSlot.Type.ARMOR || it == EquipmentSlot.OFFHAND }
+                        .forEach { mob.setItemSlot(it, ItemStack.EMPTY) }
+                    when (recruitId) {
+                        "minecraft:pillager" -> mob.setItemSlot(EquipmentSlot.MAINHAND, ItemStack(Items.CROSSBOW))
+                        "takesapillage:skirmisher" -> mob.setItemSlot(EquipmentSlot.MAINHAND, ItemStack(Items.STONE_SWORD))
+                    }
+                } else if (ModList.get().isLoaded("tconstruct")) {
                     CampaignTconLoadouts.apply(mob)
                 }
                 installCombatGoal(mob)
@@ -271,7 +297,8 @@ object InvasionRuntime {
             // Dormant while native combat makes progress; temporary MOVE ownership on a stall.
             mob.goalSelector.addGoal(0, CampaignHuntGoal(mob))
         }
-        if (mob !is Pillager || !ModList.get().isLoaded("tconstruct")) return
+        if (mob !is Pillager || !ModList.get().isLoaded("tconstruct") ||
+            mob.mainHandItem.item != ForgeRegistries.ITEMS.getValue(ResourceLocation("tconstruct:crossbow"))) return
         if (mob.goalSelector.availableGoals.none { it.goal is CampaignTconCrossbowGoal }) {
             // TConstruct's launcher extends ProjectileWeaponItem, so vanilla's
             // CrossbowAttackGoal also claims MOVE/LOOK at priority 2. Give our

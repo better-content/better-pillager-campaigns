@@ -105,7 +105,14 @@ repositories {
         url = uri(betterContentJar("better-deaths-door", "better-deaths-door-1.0.0.jar").parentFile)
         patternLayout { artifact("[artifact]-[revision].[ext]") }
         metadataSources { artifact() }
-        content { includeGroup("bettercontent.local") }
+        content { includeModule("bettercontent.local", "better-deaths-door") }
+    }
+    ivy {
+        name = "gameplayNoticesLocal"
+        url = uri(betterContentJar("better-gameplay-notices", "better-gameplay-notices-1.0.1.jar").parentFile)
+        patternLayout { artifact("[artifact]-[revision].[ext]") }
+        metadataSources { artifact() }
+        content { includeModule("bettercontent.local", "better-gameplay-notices") }
     }
 }
 
@@ -119,6 +126,8 @@ dependencies {
     testImplementation(kotlin("test"))
     compileOnly(fg.deobf("bettercontent.local:better-deaths-door:1.0.0"))
     runtimeOnly(fg.deobf("bettercontent.local:better-deaths-door:1.0.0"))
+    compileOnly(fg.deobf("bettercontent.local:better-gameplay-notices:1.0.1"))
+    runtimeOnly(fg.deobf("bettercontent.local:better-gameplay-notices:1.0.1"))
     runtimeOnly(fg.deobf("curse.maven:it-takes-a-pillage-635843:4981343"))
     runtimeOnly(fg.deobf("curse.maven:savage-and-ravage-381736:7115735"))
     runtimeOnly(fg.deobf("curse.maven:blueprint-382216:6408581"))

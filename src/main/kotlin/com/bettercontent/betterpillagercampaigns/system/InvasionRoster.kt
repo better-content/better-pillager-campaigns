@@ -10,7 +10,7 @@ import net.minecraftforge.registries.ForgeRegistries
 object InvasionRoster {
     private val authored = listOf(
         RecruitSpec("minecraft:pillager", 2, 0, RecruitRole.RANGED, weight = 4),
-        RecruitSpec("takesapillage:archer", 2, 0, RecruitRole.RANGED, weight = 2, maximumPerSquad = 3, optional = true),
+        RecruitSpec("takesapillage:archer", 2, 1, RecruitRole.RANGED, weight = 2, maximumPerSquad = 3, optional = true),
         RecruitSpec("takesapillage:skirmisher", 2, 0, RecruitRole.LINE, weight = 2, maximumPerSquad = 3, optional = true),
         RecruitSpec("minecraft:vindicator", 3, 1, RecruitRole.FRONTLINE, weight = 3, maximumPerSquad = 4),
         RecruitSpec("takesapillage:legioner", 3, 1, RecruitRole.FRONTLINE, weight = 2, maximumPerSquad = 3, optional = true),
