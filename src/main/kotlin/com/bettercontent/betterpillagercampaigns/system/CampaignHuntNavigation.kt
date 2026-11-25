@@ -46,7 +46,7 @@ internal class CampaignHuntNavigation(private val mob: Mob) {
         // Hunting is not target acquisition: short native FOLLOW_RANGE values must
         // not prevent an already-assigned hunter from seeing a loaded detour.
         val searchRange = listOf(32, 24, 16, 8, 4).firstOrNull { candidateRange ->
-            SurfaceGridSampler.loadedRectangle(level, mob.blockPosition(), mob.blockPosition(), candidateRange + 8)
+            LoadedSpawnChecks.loadedRectangle(level, mob.blockPosition(), mob.blockPosition(), candidateRange + 8)
         } ?: return
         if (!budget(level, now)) return
         val index = if (stuck || failures > 0) candidate else 0

@@ -1,10 +1,10 @@
 package com.bettercontent.betterpillagercampaigns.system
 
 import com.bettercontent.betterpillagercampaigns.PillagerCampaignsMod
+import com.bettercontent.betterpillagercampaigns.core.BlockPoint
 import com.bettercontent.betterpillagercampaigns.core.DirectorEffect
 import com.bettercontent.betterpillagercampaigns.core.EffectKind
 import com.bettercontent.betterpillagercampaigns.core.EffectResult
-import com.bettercontent.betterpillagercampaigns.core.StrategicFrontier
 import com.bettercontent.betterpillagercampaigns.data.PillagerWorldData
 import com.bettercontent.gameplaynotices.GameplayNotice
 import com.bettercontent.gameplaynotices.GameplayNotices
@@ -53,11 +53,11 @@ object InvasionRuntime {
     private const val LAST_ATTACKER_TAG = "PillagerCampaignsLastAttacker"
     private const val LAST_HIT_TICK_TAG = "PillagerCampaignsLastHitTick"
 
-    fun execute(server: MinecraftServer, effects: List<DirectorEffect>): List<EffectResult> = effects.map { effect ->
+    fun execute(server: MinecraftServer, effects: List<DirectorEffect>): List<EffectResult> = effects.mapNotNull { effect ->
         when (effect.kind) {
             EffectKind.WARN -> EffectResult(effect.effectId, warn(server, effect))
             EffectKind.MATERIALIZE -> {
-                val successful = materialize(server, effect)
+                val successful = materializeConnected(server, effect) ?: return@mapNotNull null
                 if (successful && effect.announceWave) announceWave(server, effect)
                 EffectResult(effect.effectId, successful)
             }
@@ -89,34 +89,36 @@ object InvasionRuntime {
     internal fun warningPlayerIds(effect: DirectorEffect): List<String> =
         (listOf(effect.playerId) + effect.participantPlayerIds).distinct()
 
-    internal fun materialize(server: MinecraftServer, effect: DirectorEffect): Boolean {
-        val intended = player(server, effect.playerId)
-        val anchor = effect.anchor ?: return false
-        val dimension = ResourceLocation.tryParse(anchor.dimension) ?: return false
-        val level = server.getLevel(net.minecraft.resources.ResourceKey.create(
-            net.minecraft.core.registries.Registries.DIMENSION, dimension)) ?: return false
-        val anchorPos = BlockPos(anchor.x, anchor.y, anchor.z)
-        val target = nearestEligible(level, anchorPos, intended, effect.participantPlayerIds) ?: return false
-        return materializeAgainst(level, target, effect)
+    /** Null keeps the existing pending packet until nonblocking witness reads complete. */
+    private fun materializeConnected(server: MinecraftServer, effect: DirectorEffect): Boolean? {
+        val level = server.overworld()
+        val target = VirtualCampaignRouting.targetId(effect.invasionId)?.let { player(server, it) }
+            ?: return rejected(level, effect, "virtual_proof_missing_or_target_absent")
+        val livePosition = BlockPoint(target.level().dimension().location().toString(), target.blockX, target.blockY, target.blockZ)
+        return when (VirtualCampaignRouting.admission(level, effect.invasionId, effect.anchor, livePosition)) {
+            VirtualCampaignRouting.Admission.WAIT -> null
+            VirtualCampaignRouting.Admission.REJECT -> rejected(level, effect, "virtual_proof_invalid_at_insertion")
+            VirtualCampaignRouting.Admission.READY -> materializeAgainst(level, target, effect)
+        }
     }
 
     internal fun materializeAgainst(
         level: ServerLevel,
         target: ServerPlayer,
         effect: DirectorEffect,
-        pathValidator: (Mob, BlockPos, StrategicFrontier) -> Boolean = ::pathMatchesFrontier,
     ): Boolean {
         val server = level.server
         if (!freshTargetEligible(target) || target.serverLevel() !== level) return rejected(level, effect, "target_ineligible")
         val anchor = effect.anchor?.takeIf { it.dimension == level.dimension().location().toString() } ?: return false
         val anchorPos = BlockPos(anchor.x, anchor.y, anchor.z)
         val targetPos = target.blockPosition()
-        if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) return rejected(level, effect, "unloaded_approach")
+        if (!LoadedSpawnChecks.loadedRectangle(level, anchorPos, targetPos)) return rejected(level, effect, "unloaded_approach")
         val existing = liveMembers(server, effect.invasionId).associateBy { it.persistentData.getString(MEMBER_TAG) }
         val missing = effect.members.filter { it.memberId !in existing }
         if (missing.isEmpty()) return true
-        val positions = SurfaceGridSampler.memberPositions(level, anchorPos, missing.size)
+        val positions = LoadedSpawnChecks.memberPositions(level, anchorPos, missing.size)
         if (positions.size != missing.size) return rejected(level, effect, "insufficient_positions")
+        if (positions.any { !level.isPositionEntityTicking(it) }) return rejected(level, effect, "inactive_spawn_area")
 
         // Resolve the persisted encounter tier rather than inferring it from wave index: later
         // intensity tiers also have a first wave, and retries keep the same saved invasion.
@@ -135,7 +137,7 @@ object InvasionRuntime {
                 require(exactCandidate(level, mob, pos))
                 mob.finalizeSpawn(level, level.getCurrentDifficultyAt(pos), MobSpawnType.EVENT,
                     null as SpawnGroupData?, null as CompoundTag?)
-                require(SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos))
+                require(LoadedSpawnChecks.loadedRectangle(level, anchorPos, targetPos))
                 mob.setPersistenceRequired()
                 mob.persistentData.putString(INVASION_TAG, effect.invasionId)
                 mob.persistentData.putString(MEMBER_TAG, member.memberId)
@@ -167,28 +169,14 @@ object InvasionRuntime {
                 null
             }
         }
-        if (prepared.size != missing.size || !SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) {
+        if (prepared.size != missing.size || !LoadedSpawnChecks.loadedRectangle(level, anchorPos, targetPos)) {
             prepared.forEach(Entity::discard)
             return rejected(level, effect, "preparation_rollback")
         }
         val spawned = mutableListOf<Mob>()
-        val validationLead = prepared.firstOrNull().takeIf { effect.validateApproach }
-        if (validationLead != null) {
-            if (!level.addFreshEntity(validationLead)) {
-                prepared.forEach(Entity::discard)
-                return rejected(level, effect, "lead_insertion_denied")
-            }
-            spawned += validationLead
-            // The candidate was just proven to have a solid floor; a freshly added mob has not
-            // received its first physics tick yet, so expose that fact to GroundPathNavigation.
-            validationLead.setOnGround(true)
-            if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos) ||
-                !pathValidator(validationLead, targetPos, effect.strategicFrontier)) {
-                prepared.forEach(Entity::discard)
-                return rejected(level, effect, "frontier_rollback")
-            }
-        }
-        prepared.asSequence().filter { it !== validationLead }.forEach { mob ->
+        // Spawn admission already proved the whole route. Keep actual collision,
+        // loaded-area and insertion checks without a second, follow-range-limited path search.
+        prepared.forEach { mob ->
             if (level.addFreshEntity(mob)) spawned += mob
             else {
                 spawned.forEach(Entity::discard)
@@ -196,7 +184,7 @@ object InvasionRuntime {
                 return rejected(level, effect, "member_insertion_rollback")
             }
         }
-        if (!SurfaceGridSampler.loadedRectangle(level, anchorPos, targetPos)) {
+        if (!LoadedSpawnChecks.loadedRectangle(level, anchorPos, targetPos)) {
             spawned.forEach(Entity::discard)
             return rejected(level, effect, "loaded_boundary_rollback")
         }
@@ -215,15 +203,6 @@ object InvasionRuntime {
             com.bettercontent.betterpillagercampaigns.diagnostics.PlaytestLog.Context.server(level.dimension().location().toString(), level.gameTime),
             effect.invasionId, effect.waveIndex, effect.effectId, reason)
         return false
-    }
-
-    private fun pathMatchesFrontier(mob: Mob, target: BlockPos, frontier: StrategicFrontier): Boolean {
-        val path = mob.navigation.createPath(target, 0)
-        return when (frontier) {
-            StrategicFrontier.OPEN -> path?.canReach() == true
-            StrategicFrontier.DEFENSE -> path?.canReach() != true
-            StrategicFrontier.UNKNOWN -> false
-        }
     }
 
     internal fun exactCandidate(level: ServerLevel, mob: Mob, pos: BlockPos): Boolean {
@@ -311,18 +290,6 @@ object InvasionRuntime {
         (entity as? Mob)?.persistentData?.getString(INVASION_TAG)?.takeIf(String::isNotBlank)
     fun memberId(entity: Entity?): String? =
         (entity as? Mob)?.persistentData?.getString(MEMBER_TAG)?.takeIf(String::isNotBlank)
-
-    private fun nearestEligible(
-        level: ServerLevel,
-        origin: BlockPos,
-        fallback: ServerPlayer?,
-        participantIds: List<String>,
-    ): ServerPlayer? =
-        level.players().filterIsInstance<ServerPlayer>().filter {
-            freshTargetEligible(it) &&
-                (participantIds.isEmpty() || it.uuid.toString() in participantIds)
-        }.minWithOrNull(compareBy<ServerPlayer> { it.distanceToSqr(origin.x + 0.5, origin.y + 0.5, origin.z + 0.5) }
-            .thenBy { it.uuid.toString() }) ?: fallback?.takeIf { it.serverLevel() === level && freshTargetEligible(it) }
 
     internal fun freshTargetEligible(player: ServerPlayer): Boolean =
         player.isAlive && player.gameMode.gameModeForPlayer == GameType.SURVIVAL &&

@@ -1,5 +1,6 @@
 package com.bettercontent.betterpillagercampaigns.core
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -27,13 +28,10 @@ data class InvasionRules(
     val targetUnavailableTicks: Long = 1_200L,
     val approachMinimumBlocks: Int = 48,
     val approachMaximumBlocks: Int = 72,
-    val approachTargetRadiusBlocks: Int = 12,
-    val maximumSearchExpansions: Int = 4_096,
     val localApproachRetryTicks: Long = 100L,
     val localApproachTimeoutTicks: Long = 2_400L,
     val strategicOriginMinimumBlocks: Int = 512,
     val strategicOriginMaximumBlocks: Int = 768,
-    val strategicMaximumSearchExpansions: Int = 262_144,
     val scoutStrategicMilliBlocksPerTick: Int = 80,
     val assaultStrategicMilliBlocksPerTick: Int = 50,
     val globalCampaignMobCap: Int = 96,
@@ -50,10 +48,10 @@ data class InvasionRules(
         require(assaultMinimumMembers in 1..assaultMaximumMembers && assaultMaximumMembers <= assaultGroupCap)
         require(groupRadiusBlocks > 0 && assaultWaves == 3 && waveProgressTimeoutTicks > 0)
         require(scoutActiveTicks > 0 && assaultActiveTicks > 0 && activeIdleTicks > 0 && targetUnavailableTicks > 0)
-        require(approachMinimumBlocks in 1..approachMaximumBlocks && approachTargetRadiusBlocks > 0 && maximumSearchExpansions > 0)
+        require(approachMinimumBlocks in 1..approachMaximumBlocks)
         require(localApproachRetryTicks > 0 && localApproachTimeoutTicks > 0)
         require(strategicOriginMinimumBlocks > approachMaximumBlocks)
-        require(strategicOriginMinimumBlocks <= strategicOriginMaximumBlocks && strategicMaximumSearchExpansions > 0)
+        require(strategicOriginMinimumBlocks <= strategicOriginMaximumBlocks)
         require(scoutStrategicMilliBlocksPerTick > 0 && assaultStrategicMilliBlocksPerTick > 0)
         require(globalCampaignMobCap > 0 && maximumSpawnsPerTick > 0 && maximumSpawnsPerSecond >= maximumSpawnsPerTick)
         require(normalPacketSpacingTicks > 0)
@@ -75,11 +73,11 @@ data class RecruitSpec(
 
 @Serializable data class BlockPoint(val dimension: String, val x: Int, val y: Int, val z: Int)
 
+/** Inert definition for the existing campaign save fields; not a routing input. */
 @Serializable
 data class SurfaceCell(val x: Int, val bodyY: Int, val z: Int, val passable: Boolean = true)
 
-@Serializable data class SurfaceGridObservation(val playerId: String, val cells: List<SurfaceCell>, val complete: Boolean = false)
-
+// DEFENSE is only a value in old snapshots, never a successful route observation.
 @Serializable enum class StrategicFrontier { OPEN, DEFENSE, UNKNOWN }
 
 @Serializable
@@ -87,9 +85,9 @@ data class StrategicRouteObservation(
     val playerId: String,
     val invasionId: String,
     val target: BlockPoint,
-    val atlasRevision: Long,
+    val checkedAtTick: Long,
     val route: List<BlockPoint>,
-    val frontier: StrategicFrontier,
+    val failureReason: String? = null,
 )
 
 @Serializable
@@ -137,8 +135,9 @@ data class InvasionState(
     var nextPacketTick: Long = 0L,
     var routeTarget: BlockPoint? = null,
     val defeatedMemberIds: MutableSet<String> = linkedSetOf(),
-    val observedCells: MutableMap<String, SurfaceCell> = linkedMapOf(),
-    var surfaceObservationComplete: Boolean = false,
+    // Save shape only. The director never reads these retired surface-planning fields.
+    private val observedCells: Map<String, SurfaceCell> = emptyMap(),
+    private val surfaceObservationComplete: Boolean = false,
     var anchor: BlockPoint? = null,
     val usedAnchors: MutableList<BlockPoint> = mutableListOf(),
     var pendingOutcome: InvasionOutcome? = null,
@@ -152,7 +151,7 @@ data class InvasionState(
     var strategicJourneyTotalMilliBlocks: Long = 0L,
     var localApproachTicks: Long = 0L,
     var lastRouteFailure: String = "none",
-    var strategicAtlasRevision: Long = -1L,
+    @SerialName("strategicAtlasRevision") var routeCheckedAtTick: Long = -1L,
     var strategicFrontier: StrategicFrontier = StrategicFrontier.UNKNOWN,
     var validatedAnchor: BlockPoint? = null,
     var adminExpedited: Boolean = false,
@@ -202,8 +201,9 @@ data class DirectorEffect(
     val anchor: BlockPoint? = null,
     val members: List<MemberPlan> = emptyList(),
     val participantPlayerIds: List<String> = emptyList(),
-    val strategicFrontier: StrategicFrontier = StrategicFrontier.OPEN,
-    val validateApproach: Boolean = true,
+    // Serialized pending effects retain their existing shape; neither field is an admission input.
+    private val strategicFrontier: StrategicFrontier = StrategicFrontier.OPEN,
+    private val validateApproach: Boolean = true,
     val announceWave: Boolean = false,
 )
 
@@ -227,7 +227,6 @@ sealed interface DirectorCommand {
 data class DirectorFrame(
     val elapsedTicks: Long,
     val players: List<PlayerObservation> = emptyList(),
-    val surfaces: List<SurfaceGridObservation> = emptyList(),
     val effectResults: List<EffectResult> = emptyList(),
     val memberDefeats: List<MemberDefeatObservation> = emptyList(),
     val combat: List<CombatObservation> = emptyList(),

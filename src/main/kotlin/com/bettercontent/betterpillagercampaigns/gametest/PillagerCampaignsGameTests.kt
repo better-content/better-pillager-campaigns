@@ -7,8 +7,11 @@ import com.bettercontent.betterpillagercampaigns.system.InjuryCompat
 import com.bettercontent.betterpillagercampaigns.system.InvasionRoster
 import com.bettercontent.betterpillagercampaigns.system.InvasionRuntime
 import com.bettercontent.betterpillagercampaigns.system.CampaignTconLoadouts
-import com.bettercontent.betterpillagercampaigns.system.SurfaceGridSampler
-import com.bettercontent.betterpillagercampaigns.data.TerrainAtlasData
+import com.bettercontent.betterpillagercampaigns.system.LoadedSpawnChecks
+import com.bettercontent.betterpillagercampaigns.system.VirtualCampaignRouting
+import com.bettercontent.betterpillagercampaigns.system.VirtualCampaignTerrain
+import com.bettercontent.pillagercampaigns.core.VirtualReachability
+import com.bettercontent.pillagercampaigns.core.VirtualReachability.Point
 import com.bettercontent.betterpillagercampaigns.data.PillagerWorldData
 import net.minecraft.core.BlockPos
 import net.minecraft.gametest.framework.GameTest
@@ -419,9 +422,15 @@ object PillagerCampaignsGameTests {
         val fake = fake(helper, "route")
         fake.setGameMode(GameType.SURVIVAL)
         fake.moveTo(base.x + 11.5, base.y.toDouble(), base.z + 7.5)
-        val immediate = SurfaceGridSampler.immediateAnchor(helper.level, fake.blockPosition(), 6, 8, 3)
-        helper.assertTrue(immediate != null && SurfaceGridSampler.loadedRectangle(helper.level, immediate, fake.blockPosition()),
-            "Harness arrival must select a complete loaded-only anchor in the requested band")
+        val witness = fixtureWitness(helper, base.offset(1, 0, 7), fake.blockPosition())
+        val selected = VirtualReachability.spawnPoint(witness, 6..8) { true }
+        helper.assertTrue(selected != null, "The 3D witness must provide an arrival anchor in the requested band")
+        val anchor = BlockPos(selected!!.x, selected.y, selected.z)
+        val positions = LoadedSpawnChecks.memberPositions(helper.level, anchor, 3)
+        helper.assertTrue(LoadedSpawnChecks.loadedRectangle(helper.level, anchor, fake.blockPosition()) &&
+            positions.size == 3 && positions.first() == anchor && positions.toSet().size == 3 &&
+            positions.drop(1).all { it.distManhattan(anchor) == 1 },
+            "Packet placement must preserve the exact anchor and expand to connected, distinct nearby positions")
         val zombie = EntityType.ZOMBIE.create(helper.level)!!
         zombie.moveTo(base.x + 3.5, base.y.toDouble(), base.z + 7.5)
         helper.assertTrue(InvasionRuntime.exactCandidate(helper.level, zombie, zombie.blockPosition()),
@@ -438,6 +447,8 @@ object PillagerCampaignsGameTests {
         }
         val closedPath = zombie.navigation.createPath(fake.blockPosition(), 0)
         helper.assertTrue(closedPath == null || !closedPath.canReach(), "Closed gate must be partial or unreachable")
+        helper.assertTrue(fixtureWitness(helper, base.offset(1, 0, 7), fake.blockPosition()).isEmpty(),
+            "The virtual navigator must not supply a spawn witness through a closed gate")
 
         val solid = base.offset(3, 0, 3)
         helper.level.setBlockAndUpdate(solid, Blocks.STONE.defaultBlockState())
@@ -454,13 +465,12 @@ object PillagerCampaignsGameTests {
         val remoteChunkZ = base.z shr 4
         helper.assertTrue(helper.level.chunkSource.getChunkNow(remoteChunkX, remoteChunkZ) == null,
             "Remote route chunk must begin unloaded")
-        helper.assertTrue(SurfaceGridSampler.surfaceCell(helper.level, remoteChunkX shl 4, remoteChunkZ shl 4) == null,
-            "Unknown surface cells must remain impassable")
         val remoteTarget = BlockPos((remoteChunkX shl 4) + 8, base.y, (remoteChunkZ shl 4) + 8)
-        helper.assertTrue(SurfaceGridSampler.immediateAnchor(helper.level, remoteTarget, 6, 8, 3) == null,
-            "An immediate campaign must not invent a loaded arrival anchor in unexplored terrain")
+        val remoteCell = VirtualCampaignTerrain(helper.level, 0).cell(Point(remoteTarget.x, remoteTarget.y, remoteTarget.z))
+        helper.assertTrue(remoteCell == VirtualReachability.Cell.UNKNOWN && fixtureWitness(helper,
+            remoteTarget, remoteTarget.east(8)).isEmpty(), "Missing terrain must not authorize an approach")
         helper.assertTrue(helper.level.chunkSource.getChunkNow(remoteChunkX, remoteChunkZ) == null,
-            "Sampling or searching for an immediate anchor must not load, ticket, or generate its chunk")
+            "A search for a 3D witness must not load, ticket, or generate its chunk")
         zombie.discard()
         helper.succeed()
     }
@@ -531,7 +541,7 @@ object PillagerCampaignsGameTests {
         fake.setGameMode(GameType.SURVIVAL)
         fake.moveTo(base.x + 11.5, base.y.toDouble(), base.z + 7.5)
         val anchor = base.offset(3, 0, 7)
-        helper.assertTrue(SurfaceGridSampler.loadedRectangle(helper.level, anchor, fake.blockPosition()),
+        helper.assertTrue(LoadedSpawnChecks.loadedRectangle(helper.level, anchor, fake.blockPosition()),
             "The complete bounded navigation region must already be loaded before EVENT materialization")
         InvasionRoster.runtimeSpec().recruits.forEachIndexed { index, recruit ->
             val invasionId = "catalogue-test-$index"
@@ -561,49 +571,67 @@ object PillagerCampaignsGameTests {
 
     @JvmStatic
     @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_singlepath", timeoutTicks = 100)
-    fun campaignApproachUsesOneLeadPathThenLeavesNavigationToVanilla(helper: GameTestHelper) {
+    fun laterPacketsReuseTheSharedRouteButRecheckItAtInsertion(helper: GameTestHelper) {
+        val level = helper.level
+        val server = level.server
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
-        val fake = fake(helper, "single-path")
-        fake.setGameMode(GameType.SURVIVAL)
-        fake.moveTo(base.x + 11.5, base.y.toDouble(), base.z + 7.5)
-        val members = (1..6).map { MemberPlan("lead-proof-$it", "minecraft:pillager", 2) }
-        var pathQueries = 0
-        val firstAnchor = base.offset(3, 0, 7)
-        val first = DirectorEffect(
-            "lead-proof-first", EffectKind.MATERIALIZE, fake.uuid.toString(), "lead-proof-invasion",
-            EncounterKind.ASSAULT, 0,
-            BlockPoint("minecraft:overworld", firstAnchor.x, firstAnchor.y, firstAnchor.z), members,
-            validateApproach = true,
-        )
-        helper.assertTrue(materializeFixture(helper, fake, first) { _, _, _ ->
-            pathQueries++
-            true
-        }, "A complete packet must materialize after its lead path is accepted")
-        helper.assertTrue(pathQueries == 1,
-            "A six-member packet must run exactly one campaign-owned navigation query, got $pathQueries")
-        InvasionRuntime.retire(helper.level.server, first.invasionId)
-
-        val laterAnchor = base.offset(3, 0, 11)
-        val later = first.copy(
-            effectId = "lead-proof-later",
-            anchor = BlockPoint("minecraft:overworld", laterAnchor.x, laterAnchor.y, laterAnchor.z),
-            members = (7..12).map { MemberPlan("lead-proof-$it", "minecraft:pillager", 2) },
-            validateApproach = false,
-        )
-        helper.assertTrue(materializeFixture(helper, fake, later) { _, _, _ ->
-            pathQueries++
-            true
-        }, "A later packet at a validated approach must materialize under vanilla navigation")
-        helper.assertTrue(pathQueries == 1,
-            "Later packets must not run another campaign-owned navigation query")
-        InvasionRuntime.retire(helper.level.server, later.invasionId)
+        val player = ServerPlayer(server, level,
+            GameProfile(UUID.nameUUIDFromBytes("campaign-test-shared-route".toByteArray()), "shared_route"))
+        val connection = Connection(PacketFlow.SERVERBOUND)
+        val channel = EmbeddedChannel(connection)
+        val id = player.uuid.toString()
+        val invasionId = "packet-shared-route"
+        server.playerList.placeNewPlayer(connection, player)
+        try {
+            player.setGameMode(GameType.SURVIVAL)
+            player.moveTo(base.x + 11.5, base.y.toDouble(), base.z + 7.5)
+            val target = BlockPoint("minecraft:overworld", player.blockX, player.blockY, player.blockZ)
+            establishPresence(player, target)
+            val members = (1..18).map { MemberPlan("shared-proof-$it", "minecraft:pillager", 2) }
+            val data = PillagerWorldData.get(server)
+            val staged = data.snapshot()
+            staged.tracks.getOrPut(id) { PlayerPressureTrack(id) }.invasion = InvasionState(
+                invasionId, EncounterKind.ASSAULT, id, listOf(id), 0, listOf(WavePlan(0, 36, members)), phase = InvasionPhase.ACTIVE)
+            data.restoreSnapshot(staged, InvasionRoster.runtimeSpec())
+            val request = VirtualCampaignRouting.Request(id, invasionId,
+                BlockPoint(target.dimension, base.x + 1, base.y, base.z + 7), target, id)
+            VirtualCampaignRouting.enqueue(level, request, target, VirtualCampaignRouting.Band(8, 8), emptyList(), 6)
+            repeat(4) { VirtualCampaignRouting.tick() }
+            val anchor = VirtualCampaignRouting.poll(request)?.route?.singleOrNull()
+                ?: error("Open connected fixture did not obtain its shared proof")
+            fun packet(index: Int) = DirectorEffect("shared-proof-packet-$index", EffectKind.MATERIALIZE,
+                id, invasionId, EncounterKind.ASSAULT, 0, anchor, members.drop(index * 6).take(6))
+            repeat(2) { index ->
+                helper.assertTrue(InvasionRuntime.execute(server, listOf(packet(index))).single().successful,
+                    "Packet $index must materialize without submitting another route search")
+                val live = InvasionRuntime.liveMembers(server, invasionId)
+                helper.assertTrue(live.size == 6 && live.all { it.target === player && it.navigation.path == null },
+                    "A shared witness must admit the whole packet without prescribing per-mob navigation")
+                InvasionRuntime.retire(server, invasionId)
+            }
+            for (z in 6..8) for (y in 0..1)
+                level.setBlockAndUpdate(base.offset(7, y, z), Blocks.STONE.defaultBlockState())
+            helper.assertTrue(!InvasionRuntime.execute(server, listOf(packet(2))).single().successful &&
+                InvasionRuntime.liveMembers(server, invasionId).isEmpty(),
+                "Earlier packets do not exempt a later packet from live witness validation")
+        } finally {
+            InvasionRuntime.retire(server, invasionId)
+            VirtualCampaignRouting.discard(invasionId)
+            val data = PillagerWorldData.get(server)
+            val clean = data.snapshot()
+            clean.tracks.remove(id)
+            clean.regionalPresence.remove(id)
+            data.restoreSnapshot(clean, InvasionRoster.runtimeSpec())
+            server.playerList.remove(player)
+            channel.finishAndReleaseAll()
+        }
         helper.succeed()
     }
 
     @JvmStatic
     @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_sealed", timeoutTicks = 120)
-    fun sealedDefenseMaterializesOutsideAndDoesNotTeleportInside(helper: GameTestHelper) {
+    fun sealedDefenseDoesNotMaterializeOnEitherSide(helper: GameTestHelper) {
         val base = helper.absolutePos(BlockPos(1, 2, 1))
         buildSurface(helper, base)
         for (z in 6..8) {
@@ -619,16 +647,75 @@ object PillagerCampaignsGameTests {
             EncounterKind.ASSAULT, 0,
             BlockPoint("minecraft:overworld", outside.x, outside.y, outside.z),
             listOf(MemberPlan("sealed-member", "minecraft:pillager", 2)),
-            strategicFrontier = StrategicFrontier.DEFENSE,
         )
-        helper.assertTrue(materializeFixture(helper, fake, effect),
-            "A known sealed defense must materialize on its exterior even though the real path is partial")
-        val member = InvasionRuntime.liveMembers(helper.level.server, "sealed-invasion").single()
-        helper.assertTrue(member.blockX < base.x + 7,
-            "The defensive frontier must never place a campaign member inside the wall")
-        helper.assertTrue(member.navigation.createPath(fake.blockPosition(), 0)?.canReach() != true,
-            "The real authored mob must see the sealed player as unreachable")
-        InvasionRuntime.retire(helper.level.server, "sealed-invasion")
+        helper.assertTrue(!materializeFixture(helper, fake, effect),
+            "An exterior anchor without a route to the player must not authorize a packet")
+        helper.assertTrue(InvasionRuntime.liveMembers(helper.level.server, effect.invasionId).isEmpty(),
+            "The sealed defense must produce no members on either side")
+        helper.succeed()
+    }
+
+    @JvmStatic
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_stale_route", timeoutTicks = 120)
+    fun closedGateRevokesTheFullRouteAtInsertion(helper: GameTestHelper) {
+        val level = helper.level
+        val server = level.server
+        val base = helper.absolutePos(BlockPos(1, 2, 1))
+        buildSurface(helper, base)
+        val gate = base.offset(7, 0, 7)
+        for (z in listOf(6, 8)) for (y in 0..1)
+            level.setBlockAndUpdate(base.offset(7, y, z), Blocks.STONE.defaultBlockState())
+        val player = ServerPlayer(server, level,
+            GameProfile(UUID.nameUUIDFromBytes("campaign-test-stale-route".toByteArray()), "stale_route"))
+        val connection = Connection(PacketFlow.SERVERBOUND)
+        val channel = EmbeddedChannel(connection)
+        server.playerList.placeNewPlayer(connection, player)
+        try {
+            player.setGameMode(GameType.SURVIVAL)
+            player.moveTo(base.x + 11.5, base.y.toDouble(), base.z + 7.5)
+            val target = BlockPoint("minecraft:overworld", player.blockX, player.blockY, player.blockZ)
+            establishPresence(player, target)
+            val id = player.uuid.toString()
+            val invasionId = "commit-witness-regression"
+            val request = VirtualCampaignRouting.Request(id, invasionId,
+                BlockPoint(target.dimension, base.x + 1, base.y, base.z + 7), target, id)
+            val members = (1..3).map { MemberPlan("commit-witness-$it", "minecraft:pillager", 2) }
+            val data = PillagerWorldData.get(server)
+            val staged = data.snapshot()
+            staged.tracks.getOrPut(id) { PlayerPressureTrack(id) }.invasion = InvasionState(
+                invasionId, EncounterKind.ASSAULT, id, listOf(id), 0, listOf(WavePlan(0, 6, members)), phase = InvasionPhase.ACTIVE)
+            data.restoreSnapshot(staged, InvasionRoster.runtimeSpec())
+            fun prepare(): DirectorEffect {
+                VirtualCampaignRouting.enqueue(level, request, target, VirtualCampaignRouting.Band(8, 8), emptyList(), members.size)
+                repeat(4) { VirtualCampaignRouting.tick() }
+                val anchor = VirtualCampaignRouting.poll(request)?.route?.singleOrNull()
+                    ?: error("Open connected fixture did not obtain a full-route proof")
+                return DirectorEffect("commit-witness", EffectKind.MATERIALIZE, id, invasionId, EncounterKind.ASSAULT,
+                    0, anchor, members)
+            }
+            val stale = prepare()
+            for (y in 0..1) level.setBlockAndUpdate(gate.above(y), Blocks.STONE.defaultBlockState())
+            helper.assertTrue(!InvasionRuntime.execute(server, listOf(stale)).single().successful,
+                "The live commit check must revoke a proof after its passage is sealed")
+            helper.assertTrue(InvasionRuntime.liveMembers(server, invasionId).isEmpty(), "A stale witness must not spawn even one recruit")
+            helper.assertTrue(!InvasionRuntime.execute(server, listOf(stale)).single().successful,
+                "An anchor without a current proof must not fall back to native pathfinding")
+            for (y in 0..1) level.setBlockAndUpdate(gate.above(y), Blocks.AIR.defaultBlockState())
+            helper.assertTrue(InvasionRuntime.execute(server, listOf(prepare())).single().successful,
+                "A fresh proof from the same departure must work after reopening")
+            val live = InvasionRuntime.liveMembers(server, invasionId)
+            helper.assertTrue(live.size == 3 && live.all { it.target === player }, "The reopened passage must deliver the complete packet")
+        } finally {
+            InvasionRuntime.retire(server, "commit-witness-regression")
+            VirtualCampaignRouting.discard("commit-witness-regression")
+            val data = PillagerWorldData.get(server)
+            val clean = data.snapshot()
+            clean.tracks.remove(player.uuid.toString())
+            clean.regionalPresence.remove(player.uuid.toString())
+            data.restoreSnapshot(clean, InvasionRoster.runtimeSpec())
+            server.playerList.remove(player)
+            channel.finishAndReleaseAll()
+        }
         helper.succeed()
     }
 
@@ -648,7 +735,7 @@ object PillagerCampaignsGameTests {
         val target = BlockPoint("minecraft:overworld", fake.blockX, fake.blockY, fake.blockZ)
         val rules = InvasionRules(
             scoutWindowMinTicks = 0, scoutWindowMaxTicks = 0,
-            approachMinimumBlocks = 2, approachMaximumBlocks = 4, approachTargetRadiusBlocks = 1,
+            approachMinimumBlocks = 2, approachMaximumBlocks = 4,
             strategicOriginMinimumBlocks = 5, strategicOriginMaximumBlocks = 6,
         )
         val director = InvasionDirector.create(83, InvasionRuntimeSpec.create(rules,
@@ -664,10 +751,10 @@ object PillagerCampaignsGameTests {
         val rejected = director.transition(DirectorFrame(0, players = listOf(player), strategicRoutes = listOf(
             StrategicRouteObservation(playerId, invasion.invasionId, target, 1,
                 listOf(BlockPoint(target.dimension, outside.x - 3, outside.y, outside.z),
-                    BlockPoint(target.dimension, outside.x, outside.y, outside.z)), StrategicFrontier.OPEN),
+                    BlockPoint(target.dimension, outside.x, outside.y, outside.z))),
         ))).effects.single { it.kind == EffectKind.MATERIALIZE }
         helper.assertTrue(!materializeFixture(helper, fake, rejected),
-            "The exact pathfinder must reject the atlas-open approach outside the closed defense")
+            "The 3D navigator must reject the supplied approach outside the closed defense")
         director.transition(DirectorFrame(0, effectResults = listOf(EffectResult(rejected.effectId, false))))
         invasion = director.snapshot().tracks.getValue(playerId).invasion!!
         helper.assertTrue(invasion.usedAnchors.single() == rejected.anchor,
@@ -677,7 +764,7 @@ object PillagerCampaignsGameTests {
         val retried = director.transition(DirectorFrame(rules.normalPacketSpacingTicks, players = listOf(player),
             strategicRoutes = listOf(StrategicRouteObservation(playerId, invasion.invasionId, target, 2,
                 listOf(BlockPoint(target.dimension, reachable.x + 3, reachable.y, reachable.z),
-                    BlockPoint(target.dimension, reachable.x, reachable.y, reachable.z)), StrategicFrontier.OPEN),
+                    BlockPoint(target.dimension, reachable.x, reachable.y, reachable.z))),
             ))).effects.single { it.kind == EffectKind.MATERIALIZE }
         helper.assertTrue(retried.anchor == BlockPoint(target.dimension, reachable.x, reachable.y, reachable.z),
             "Retry must advance to the alternate anchor instead of recycling the rejected one")
@@ -722,7 +809,7 @@ object PillagerCampaignsGameTests {
         val observations = players.map { player -> PlayerObservation(player.uuid.toString(), true, true, true,
             BlockPoint("minecraft:overworld", player.blockX, player.blockY, player.blockZ)) }
         val rules = InvasionRules(scoutWindowMinTicks = 0, scoutWindowMaxTicks = 0,
-            approachMinimumBlocks = 2, approachMaximumBlocks = 4, approachTargetRadiusBlocks = 1,
+            approachMinimumBlocks = 2, approachMaximumBlocks = 4,
             strategicOriginMinimumBlocks = 5, strategicOriginMaximumBlocks = 6)
         val director = InvasionDirector.create(183, InvasionRuntimeSpec.create(rules,
             listOf(RecruitSpec("minecraft:pillager", 2, 0, RecruitRole.RANGED))))
@@ -736,7 +823,7 @@ object PillagerCampaignsGameTests {
             StrategicRouteObservation(observation.playerId, invasion.invasionId, observation.position!!,
                 if (reachable) 2 else 1, listOf(
                     BlockPoint("minecraft:overworld", pos.x + (if (reachable) 3 else -3), pos.y, pos.z),
-                    BlockPoint("minecraft:overworld", pos.x, pos.y, pos.z)), StrategicFrontier.OPEN)
+                    BlockPoint("minecraft:overworld", pos.x, pos.y, pos.z)))
         }
         val rejected = director.transition(DirectorFrame(0, players = observations, strategicRoutes = routes(false)))
             .effects.filter { it.kind == EffectKind.MATERIALIZE }
@@ -793,8 +880,7 @@ object PillagerCampaignsGameTests {
             assaultWindowMinTicks = 20, assaultWindowMaxTicks = 20,
             assaultWarningSurfaceTicks = 5, timeTierTicks = 1_000_000,
             waveProgressTimeoutTicks = 50, assaultActiveTicks = 500, activeIdleTicks = 300,
-            approachMinimumBlocks = 2, approachMaximumBlocks = 10, approachTargetRadiusBlocks = 1,
-            maximumSearchExpansions = 128, strategicOriginMinimumBlocks = 11,
+            approachMinimumBlocks = 2, approachMaximumBlocks = 10, strategicOriginMinimumBlocks = 11,
             strategicOriginMaximumBlocks = 12, assaultStrategicMilliBlocksPerTick = 2_000,
             normalPacketSpacingTicks = 1,
         )
@@ -821,7 +907,7 @@ object PillagerCampaignsGameTests {
             val before = director.snapshot().tracks[playerId]?.invasion
             val route = before?.takeIf { it.phase == InvasionPhase.APPROACHING }?.let { invasion ->
                 listOf(StrategicRouteObservation(playerId, invasion.invasionId, target, 1,
-                    listOf(anchor), StrategicFrontier.OPEN))
+                    listOf(anchor)))
             }.orEmpty()
             val defeated = before?.takeIf { it.phase == InvasionPhase.ACTIVE }?.let { invasion ->
                 val wave = invasion.waves[invasion.currentWave]
@@ -909,11 +995,18 @@ object PillagerCampaignsGameTests {
         val invasion = PillagerWorldData.get(helper.level.server).snapshot().tracks.getValue(playerId).invasion!!
         val invasionId = invasion.invasionId
         val memberCount = invasion.waves[0].members.size
-        val anchor = base.offset(3, 0, 7)
-        PillagerCampaignsEvents.advance(helper.level.server, 0,
-            strategicRoutes = listOf(StrategicRouteObservation(playerId, invasionId, targetPoint, 1,
-                listOf(BlockPoint(targetPoint.dimension, anchor.x, anchor.y, anchor.z)), StrategicFrontier.OPEN)),
-            playersOverride = listOf(player))
+        // Stage a short, real route through the arena's opening for this combat fixture.
+        // The scheduler and materializer consume an actual transient witness, not an injected anchor.
+        val data = PillagerWorldData.get(helper.level.server)
+        val staged = data.snapshot()
+        val origin = BlockPoint(targetPoint.dimension, base.x, base.y, base.z + 7)
+        staged.tracks.getValue(playerId).invasion!!.strategicOrigin = origin
+        data.restoreSnapshot(staged, runtime)
+        VirtualCampaignRouting.enqueue(helper.level,
+            VirtualCampaignRouting.Request(playerId, invasionId, origin, targetPoint, playerId), targetPoint,
+            VirtualCampaignRouting.Band(8, 8), emptyList(), minOf(memberCount, 6))
+        repeat(4) { VirtualCampaignRouting.tick() }
+        PillagerCampaignsEvents.advance(helper.level.server, 0, playersOverride = listOf(player))
         var dispatches = 0
         while (InvasionRuntime.liveMembers(helper.level.server, invasionId).size < memberCount && dispatches++ < 10) {
             PillagerCampaignsEvents.advance(helper.level.server, runtime.rules.normalPacketSpacingTicks,
@@ -983,28 +1076,36 @@ object PillagerCampaignsGameTests {
     }
 
     @JvmStatic
-    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_unload", timeoutTicks = 300)
-    fun terrainAtlasSurvivesActualChunkUnloadWithoutReloadingIt(helper: GameTestHelper) {
+    @GameTest(templateNamespace = PillagerCampaignsMod.MOD_ID, template = "wide_arena", batch = "campaign_unload", timeoutTicks = 360)
+    fun changedTerrainSurvivesActualChunkUnloadWithoutReloadingIt(helper: GameTestHelper) {
         val level = helper.level
         val origin = helper.absolutePos(BlockPos.ZERO)
-        val chunkPos = ChunkPos((origin.x shr 4) + 40, (origin.z shr 4) + 40)
-        level.chunkSource.addRegionTicket(TicketType.UNKNOWN, chunkPos, 2, chunkPos)
-        val chunk = level.getChunk(chunkPos.x, chunkPos.z)
-        val atlas = TerrainAtlasData.get(level.server)
-        atlas.observe(level, chunk)
-        val sampleX = chunkPos.minBlockX + 8
-        val sampleZ = chunkPos.minBlockZ + 8
-        helper.assertTrue(atlas.cellsAround(sampleX, sampleZ, 1).isNotEmpty(),
-            "Loaded terrain must enter the strategic atlas")
-        level.chunkSource.removeRegionTicket(TicketType.UNKNOWN, chunkPos, 2, chunkPos)
+        val chunk = ChunkPos((origin.x shr 4) + 40, (origin.z shr 4) + 40)
+        level.chunkSource.addRegionTicket(TicketType.UNKNOWN, chunk, 2, chunk)
+        level.getChunk(chunk.x, chunk.z)
+        val sample = Point(chunk.minBlockX + 8, level.minBuildHeight + 7, chunk.minBlockZ + 8)
+        val position = BlockPos(sample.x, sample.y, sample.z)
+        val terrain = VirtualCampaignTerrain(level, 1)
+        terrain.beginSlice()
+        helper.assertTrue(terrain.cell(sample) == VirtualReachability.Cell.CLEAR, "Fixture must begin with an empty cell")
+        level.setBlockAndUpdate(position, Blocks.STONE.defaultBlockState())
+        terrain.beginSlice()
+        helper.assertTrue(terrain.cell(sample) == VirtualReachability.Cell.SUPPORT && terrain.savedReads == 0,
+            "The same live coordinate must see the edit without reading disk")
+        level.chunkSource.removeRegionTicket(TicketType.UNKNOWN, chunk, 2, chunk)
         helper.runAfterDelay(200) {
-            helper.assertTrue(level.chunkSource.getChunkNow(chunkPos.x, chunkPos.z) == null,
-                "The remote proof chunk must actually unload")
-            helper.assertTrue(atlas.cellsAround(sampleX, sampleZ, 1).isNotEmpty(),
-                "Atlas terrain must remain available after the source chunk unloads")
-            helper.assertTrue(level.chunkSource.getChunkNow(chunkPos.x, chunkPos.z) == null,
-                "Reading atlas terrain must not reload or ticket the chunk")
-            helper.succeed()
+            val saved = VirtualCampaignTerrain(level, 1)
+            fun checkSaved() {
+                helper.assertTrue(level.chunkSource.getChunkNow(chunk.x, chunk.z) == null,
+                    "Reading the edited chunk must not reload it")
+                saved.beginSlice()
+                val cell = saved.cell(sample)
+                if (cell == VirtualReachability.Cell.PENDING) { helper.runAfterDelay(1, ::checkSaved); return }
+                helper.assertTrue(cell == VirtualReachability.Cell.SUPPORT && saved.liveReads == 0 && saved.savedReads == 1,
+                    "The 3D navigator must read the actual edit from the saved palette")
+                helper.succeed()
+            }
+            checkSaved()
         }
     }
 
@@ -1012,8 +1113,11 @@ object PillagerCampaignsGameTests {
         helper: GameTestHelper,
         player: ServerPlayer,
         effect: DirectorEffect,
-        pathValidator: ((Mob, BlockPos, StrategicFrontier) -> Boolean)? = null,
     ): Boolean {
+        // Direct insertion fixtures use short, resident 3D routes. The production path is
+        // exercised separately with registered players and real departure-to-target proofs.
+        val anchor = effect.anchor ?: return false
+        if (fixtureWitness(helper, BlockPos(anchor.x, anchor.y, anchor.z), player.blockPosition()).isEmpty()) return false
         // Production publishes its Director transition before executing effects. Direct adapter
         // fixtures must likewise publish an active encounter, not rely on removed join ghosts.
         val data = PillagerWorldData.get(helper.level.server)
@@ -1024,13 +1128,24 @@ object PillagerCampaignsGameTests {
             phase = InvasionPhase.ACTIVE,
         )
         data.restoreSnapshot(snapshot, InvasionRoster.runtimeSpec())
-        val successful = if (pathValidator == null) InvasionRuntime.materializeAgainst(helper.level, player, effect)
-            else InvasionRuntime.materializeAgainst(helper.level, player, effect, pathValidator)
+        val successful = InvasionRuntime.materializeAgainst(helper.level, player, effect)
         if (successful) InvasionRuntime.liveMembers(helper.level.server, effect.invasionId).forEach { mob ->
             helper.assertTrue(!mob.isRemoved && mob.isAlive && helper.level.getEntity(mob.uuid) === mob,
                 "Successful fixture materialization must produce registered living members, not removed ghosts")
         }
         return successful
+    }
+
+    private fun fixtureWitness(helper: GameTestHelper, from: BlockPos, to: BlockPos): List<Point> {
+        val start = Point(from.x, from.y, from.z)
+        val goal = Point(to.x, to.y, to.z)
+        val terrain = VirtualCampaignTerrain(helper.level, 0)
+        val bounds = VirtualReachability.Bounds(minOf(start.x, goal.x) - 2..maxOf(start.x, goal.x) + 2,
+            minOf(start.y, goal.y) - 2..maxOf(start.y, goal.y) + 2,
+            minOf(start.z, goal.z) - 2..maxOf(start.z, goal.z) + 2)
+        val search = VirtualReachability(start, bounds, { it == goal }, { it.lowerBoundTo(goal) }, 1_024,
+            terrain::cell, retainWitness = true)
+        return if (search.advance(1_024) is VirtualReachability.Result.Reachable) search.witness else emptyList()
     }
 
     private fun buildSurface(helper: GameTestHelper, base: BlockPos) {

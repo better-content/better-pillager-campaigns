@@ -122,7 +122,7 @@ object CampaignHuntingGameTests {
         for (chunkX in ((base.x - 40) shr 4)..((base.x + 33 + 40) shr 4))
             for (chunkZ in ((base.z - 40) shr 4)..((base.z + 33 + 40) shr 4))
                 helper.level.getChunk(chunkX, chunkZ)
-        helper.assertTrue(SurfaceGridSampler.loadedRectangle(helper.level, base, base.offset(33, 0, 33), 40),
+        helper.assertTrue(LoadedSpawnChecks.loadedRectangle(helper.level, base, base.offset(33, 0, 33), 40),
             "Fixture must own its complete FULL 32+8 collision halo before native hunting")
         // No subscription exists while setup assertions can fail before Scenario is returned.
         val deathTrace = CampaignFixtureActorTrace(helper, listOf(mob), 6500L,
@@ -145,7 +145,7 @@ object CampaignHuntingGameTests {
                 deathTrace.note("case-native-ready-full-owned-halo")
             }
             val elapsed = (helper.level.gameTime - readyAt!!).toInt()
-            helper.assertTrue(SurfaceGridSampler.loadedRectangle(helper.level, mob.blockPosition(), mob.blockPosition(), 40),
+            helper.assertTrue(LoadedSpawnChecks.loadedRectangle(helper.level, mob.blockPosition(), mob.blockPosition(), 40),
                 "Native hunting requires its prewarmed FULL 32+8 collision halo: ${deathTrace.state(mob)}")
             crossed = crossed || mob.x > base.x + 17.0
             firingPosition = firingPosition || (mob is RangedAttackMob &&

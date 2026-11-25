@@ -1,6 +1,5 @@
 package com.bettercontent.betterpillagercampaigns.core
 
-import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
@@ -21,7 +20,6 @@ class InvasionDirector private constructor(
         val events = mutableListOf<DirectorEvent>()
         applyCommands(frame.commands, events)
         applyEffectResults(frame.effectResults, events)
-        mergeSurfaces(frame.surfaces)
         mergeStrategicRoutes(frame.strategicRoutes)
         state.tick += frame.elapsedTicks
         val players = frame.players.associateBy(PlayerObservation::playerId)
@@ -133,7 +131,6 @@ class InvasionDirector private constructor(
             // Stop all per-encounter clocks and route work until a target is available again.
             if (invasion.kind == EncounterKind.ASSAULT && !available) return@forEach
             if (target?.regionFamiliar == true && target.position != null && invasion.routeTarget?.let { moved(it, target.position) } == true) {
-                val previousTarget = invasion.routeTarget
                 invasion.routeTarget = target.position
                 invasion.anchor = null
                 invasion.usedAnchors.clear()
@@ -144,10 +141,6 @@ class InvasionDirector private constructor(
                 invasion.validatedAnchor = null
                 invasion.lastRouteFailure = "target_moved"
                 invasion.phase = InvasionPhase.APPROACHING
-                if (previousTarget != null) invasion.strategicOrigin = invasion.strategicOrigin?.let { origin ->
-                    BlockPoint(target.position.dimension, target.position.x + origin.x - previousTarget.x,
-                        target.position.y, target.position.z + origin.z - previousTarget.z)
-                }
                 updateVirtualPosition(invasion)
             }
             if (invasion.kind == EncounterKind.ASSAULT && !invasion.warningIssued && shouldWarn(track, invasion) &&
@@ -216,7 +209,7 @@ class InvasionDirector private constructor(
             updateVirtualPosition(invasion)
         }
         if (!virtualJourneyComplete(invasion) || track.eligibleTicks < localSearchEligibleTick(invasion)) return
-        if (invasion.strategicRoute.isEmpty() || invasion.strategicFrontier == StrategicFrontier.UNKNOWN) return
+        if (invasion.strategicRoute.isEmpty() || invasion.strategicFrontier != StrategicFrontier.OPEN) return
         if (track.eligibleTicks < invasion.scheduledArrivalEligibleTick) return
         val anchor = invasion.strategicRoute.last()
         invasion.anchor = anchor
@@ -253,7 +246,6 @@ class InvasionDirector private constructor(
             invasion.nextPacketTick = state.tick + spacing
             publish(DirectorEffect("", EffectKind.MATERIALIZE, invasion.targetPlayerId, invasion.invasionId,
                 invasion.kind, invasion.currentWave, invasion.anchor, members, invasion.participantPlayerIds,
-                invasion.strategicFrontier, validateApproach = invasion.validatedAnchor != invasion.anchor,
                 announceWave = announceWave))
             capacity -= members.size
             events += event("packet_queued", invasion.invasionId, "wave=${invasion.currentWave} members=${members.size}")
@@ -286,7 +278,7 @@ class InvasionDirector private constructor(
                     val wave = invasion.waves[effect.waveIndex]
                     if (result.successful) {
                         wave.materializedMembers += effect.members.size
-                        if (effect.validateApproach) invasion.validatedAnchor = effect.anchor
+                        invasion.validatedAnchor = effect.anchor
                         if (wave.startedTick < 0) wave.startedTick = state.tick
                         invasion.phase = InvasionPhase.ACTIVE
                         invasion.lastCombatTick = state.tick
@@ -310,45 +302,21 @@ class InvasionDirector private constructor(
         }
     }
 
-    private fun mergeSurfaces(observations: List<SurfaceGridObservation>) {
-        observations.forEach { observation ->
-            track(observation.playerId).invasion?.let { invasion ->
-                if (observation.complete) invasion.observedCells.clear()
-                observation.cells.forEach { invasion.observedCells[cellKey(it.x, it.z)] = it }
-                invasion.surfaceObservationComplete = invasion.surfaceObservationComplete || observation.complete
-                // Explicit complete grids remain a compact harness input. Production supplies a
-                // loaded-terrain local approach after virtual strategic travel.
-                if (observation.complete && invasion.strategicRoute.isEmpty()) {
-                    val target = invasion.routeTarget ?: return@let
-                    val anchor = SurfaceApproach.choose(observation.cells, target, spec.rules,
-                        stableSeed(state.worldSeed, invasion.invasionId, invasion.currentWave)) ?: return@let
-                    val point = BlockPoint(target.dimension, anchor.x, anchor.bodyY, anchor.z)
-                    invasion.strategicRoute = mutableListOf(point)
-                    invasion.strategicFrontier = StrategicFrontier.OPEN
-                    invasion.lastRouteFailure = "none"
-                }
-            }
-        }
-    }
-
     private fun mergeStrategicRoutes(observations: List<StrategicRouteObservation>) {
         observations.sortedBy(StrategicRouteObservation::invasionId).forEach { observation ->
             val invasion = track(observation.playerId).invasion ?: return@forEach
             if (invasion.invasionId != observation.invasionId || invasion.phase != InvasionPhase.APPROACHING) return@forEach
             if (observation.target != invasion.routeTarget) return@forEach
-            if (observation.route.isEmpty()) {
-                invasion.strategicRoute.clear()
-                invasion.strategicRouteIndex = 0
-                invasion.strategicAtlasRevision = observation.atlasRevision
-                invasion.strategicFrontier = StrategicFrontier.UNKNOWN
-                invasion.lastRouteFailure = "no_loaded_local_route"
-                return@forEach
-            }
             invasion.strategicRoute = observation.route.toMutableList()
             invasion.strategicRouteIndex = 0
-            invasion.strategicAtlasRevision = observation.atlasRevision
-            invasion.strategicFrontier = observation.frontier
-            invasion.lastRouteFailure = "none"
+            invasion.routeCheckedAtTick = observation.checkedAtTick
+            if (observation.route.isEmpty()) {
+                invasion.strategicFrontier = StrategicFrontier.UNKNOWN
+                invasion.lastRouteFailure = observation.failureReason ?: "no_virtual_route"
+            } else {
+                invasion.strategicFrontier = StrategicFrontier.OPEN
+                invasion.lastRouteFailure = "none"
+            }
         }
     }
 
@@ -453,7 +421,7 @@ class InvasionDirector private constructor(
         return (spec.rules.strategicOriginMaximumBlocks * 1_000L + speed - 1L) / speed
     }
     private fun shouldWarn(track: PlayerPressureTrack, invasion: InvasionState): Boolean {
-        if (invasion.strategicRoute.isEmpty() || invasion.strategicFrontier == StrategicFrontier.UNKNOWN) return false
+        if (invasion.strategicRoute.isEmpty() || invasion.strategicFrontier != StrategicFrontier.OPEN) return false
         return invasion.scheduledArrivalEligibleTick - track.eligibleTicks <= spec.rules.assaultWarningSurfaceTicks
     }
 
@@ -525,15 +493,6 @@ class InvasionDirector private constructor(
     private fun participantInAssault(id: String) = primaryTracks().any {
         it.invasion?.kind == EncounterKind.ASSAULT && id in it.invasion!!.participantPlayerIds
     }
-    private fun chooseTarget(
-        invasion: InvasionState, players: Map<String, PlayerObservation>, requireFamiliar: Boolean = true,
-    ): PlayerObservation? =
-        players[invasion.targetPlayerId]?.takeIf { it.eligible && it.physicallyAvailable && (!requireFamiliar || it.regionFamiliar) }
-            ?: invasion.participantPlayerIds.asSequence().mapNotNull(players::get)
-                .filter { it.eligible && it.physicallyAvailable && (!requireFamiliar || it.regionFamiliar) }
-                .minWithOrNull(compareBy<PlayerObservation> { distanceSquared(it.position, invasion.routeTarget) }
-                    .thenBy { it.playerId })
-
     private fun publish(effect: DirectorEffect) {
         val id = "effect:${++state.effectSequence}"
         state.pendingEffects[id] = effect.copy(effectId = id)
@@ -555,7 +514,15 @@ class InvasionDirector private constructor(
         internal fun stableSeed(vararg values: Any): Long = values.fold(-3750763034362895579L) { hash, value ->
             value.toString().fold(hash) { next, character -> (next xor character.code.toLong()) * 1099511628211L }
         }
-        private fun cellKey(x: Int, z: Int) = "$x:$z"
+        fun chooseTarget(
+            invasion: InvasionState, players: Map<String, PlayerObservation>, requireFamiliar: Boolean = true,
+        ): PlayerObservation? =
+            players[invasion.targetPlayerId]?.takeIf { it.eligible && it.physicallyAvailable && (!requireFamiliar || it.regionFamiliar) }
+                ?: invasion.participantPlayerIds.asSequence().mapNotNull(players::get)
+                    .filter { it.eligible && it.physicallyAvailable && (!requireFamiliar || it.regionFamiliar) }
+                    .minWithOrNull(compareBy<PlayerObservation> { distanceSquared(it.position, invasion.routeTarget) }
+                        .thenBy { it.playerId })
+
         private fun moved(a: BlockPoint, b: BlockPoint) =
             a.dimension != b.dimension || maxOf(abs(a.x - b.x), abs(a.z - b.z)) > 16
         private fun close(a: PlayerObservation, b: PlayerObservation, radius: Int): Boolean {
@@ -652,38 +619,4 @@ object RosterPlanner {
         }
         return candidates.last()
     }
-}
-
-object SurfaceApproach {
-    fun choose(cells: Collection<SurfaceCell>, target: BlockPoint, rules: InvasionRules, seed: Long): SurfaceCell? {
-        val passable = cells.filter(SurfaceCell::passable).associateBy { it.x to it.z }
-        val origins = passable.values.filter {
-            chebyshev(it, target) in rules.approachMinimumBlocks..rules.approachMaximumBlocks
-        }.sortedWith(compareByDescending<SurfaceCell> { chebyshev(it, target) }
-            .thenBy { stableRank(it, seed) }.thenBy { it.x }.thenBy { it.z })
-        data class Node(val cell: SurfaceCell, val origin: SurfaceCell)
-        origins.forEach originLoop@ { origin ->
-            val queue = ArrayDeque<Node>()
-            val seen = hashSetOf(origin.x to origin.z)
-            queue += Node(origin, origin)
-            var expansions = 0
-            while (queue.isNotEmpty() && expansions < rules.maximumSearchExpansions) {
-                expansions++
-                val node = queue.removeFirst()
-                if (chebyshev(node.cell, target) <= rules.approachTargetRadiusBlocks) return node.origin
-                CARDINALS.forEach neighbors@ { (dx, dz) ->
-                    val next = passable[node.cell.x + dx to node.cell.z + dz] ?: return@neighbors
-                    val rise = next.bodyY - node.cell.bodyY
-                    if (rise > 1 || rise < -2 || !seen.add(next.x to next.z)) return@neighbors
-                    queue += Node(next, origin)
-                }
-            }
-        }
-        return null
-    }
-    private val CARDINALS = listOf(1 to 0, -1 to 0, 0 to 1, 0 to -1)
-    private fun chebyshev(cell: SurfaceCell, target: BlockPoint) =
-        maxOf(abs(cell.x - target.x), abs(cell.z - target.z))
-    private fun stableRank(cell: SurfaceCell, seed: Long) =
-        (seed xor (cell.x.toLong() shl 32) xor cell.z.toLong()) * -7046029254386353131L
 }

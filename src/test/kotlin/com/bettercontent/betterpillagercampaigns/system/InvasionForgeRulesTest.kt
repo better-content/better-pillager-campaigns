@@ -9,6 +9,7 @@ import net.minecraft.nbt.CompoundTag
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class InvasionForgeRulesTest {
@@ -16,19 +17,13 @@ class InvasionForgeRulesTest {
         assertFalse(CampaignHarnessCommands.enabled())
     }
 
-    @Test fun `local route bounds may use the approach band without weakening strategic rules`() {
+    @Test fun `the spawn band does not move the strategic departure into the local approach`() {
         val production = InvasionRules()
-        val local = StrategicRoutePlanner.Rules(
-            approachMinimumBlocks = production.approachMinimumBlocks,
-            approachMaximumBlocks = production.approachMaximumBlocks,
-            approachTargetRadiusBlocks = production.approachTargetRadiusBlocks,
-            originMinimumBlocks = production.approachMinimumBlocks,
-            originMaximumBlocks = production.approachMaximumBlocks,
-            maximumSearchExpansions = production.maximumSearchExpansions,
-        )
-        assertEquals(production.approachMinimumBlocks, local.originMinimumBlocks)
-        assertEquals(production.approachMaximumBlocks, local.originMaximumBlocks)
-        assertTrue(local.maximumSearchExpansions > 0)
+        assertEquals(48..72, production.approachMinimumBlocks..production.approachMaximumBlocks)
+        assertEquals(512..768, production.strategicOriginMinimumBlocks..production.strategicOriginMaximumBlocks)
+        assertFailsWith<IllegalArgumentException> {
+            production.copy(strategicOriginMinimumBlocks = production.approachMaximumBlocks)
+        }
     }
 
     @Test fun `authored roster has bounded explicit progression and vanilla fallback`() {
@@ -38,23 +33,6 @@ class InvasionForgeRulesTest {
         assertTrue(roster.filter { it.role in setOf(RecruitRole.SUPPORT, RecruitRole.ELITE) }.all { it.maximumPerSquad == 1 })
         assertEquals(roster.size, roster.map { it.entityId }.distinct().size)
         assertTrue(roster.all { it.cost > 0 && it.unlockIntensity in 0..5 })
-    }
-
-    @Test fun `surface work begins with connected cardinal corridors`() {
-        val offsets = SurfaceGridSampler.orderedOffsets(4)
-        assertEquals(81, offsets.size)
-        assertEquals(-4 to -2, offsets.first())
-        assertTrue((-4 to 0) in offsets)
-        assertTrue((4 to 0) in offsets)
-        assertTrue((0 to -4) in offsets)
-        assertTrue((0 to 4) in offsets)
-    }
-
-    @Test fun `member placement expands in stable square rings`() {
-        val offsets = SurfaceGridSampler.memberOffsets(2)
-        assertEquals(0 to 0, offsets.first())
-        assertEquals(25, offsets.size)
-        assertEquals(9, offsets.takeWhile { maxOf(kotlin.math.abs(it.first), kotlin.math.abs(it.second)) <= 1 }.size)
     }
 
     @Test fun `assault warning reaches the primary and every grouped participant once`() {

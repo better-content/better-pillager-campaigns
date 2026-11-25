@@ -1,8 +1,14 @@
 package com.bettercontent.betterpillagercampaigns.core
 
+import com.bettercontent.pillagercampaigns.core.VirtualReachability
+import com.bettercontent.pillagercampaigns.core.VirtualReachability.Bounds
+import com.bettercontent.pillagercampaigns.core.VirtualReachability.Cell
+import com.bettercontent.pillagercampaigns.core.VirtualReachability.Point
+import com.bettercontent.pillagercampaigns.core.VirtualReachability.Result
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.math.ceil
+import kotlin.random.Random
 import kotlin.system.measureTimeMillis
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -19,8 +25,7 @@ class InvasionDirectorTest {
         assaultWarningSurfaceTicks = 20, deathGraceTicks = 250, timeTierTicks = 1_000,
         waveProgressTimeoutTicks = 50, scoutActiveTicks = 80, assaultActiveTicks = 500,
         activeIdleTicks = 300, targetUnavailableTicks = 40,
-        approachMinimumBlocks = 2, approachMaximumBlocks = 4, approachTargetRadiusBlocks = 1,
-        maximumSearchExpansions = 128,
+        approachMinimumBlocks = 2, approachMaximumBlocks = 4,
     )
     private val roster = listOf(
         RecruitSpec("minecraft:pillager", 2, 0, RecruitRole.RANGED, weight = 4),
@@ -88,7 +93,7 @@ class InvasionDirectorTest {
         val dispatched = engine.transition(playerFrame(0))
         assertTrue(dispatched.effects.none { it.kind == EffectKind.WARN },
             "An assault with no known route must not warn and then stall indefinitely")
-        val arrived = engine.transition(playerFrame(19, surfaces = listOf(grid())))
+        val arrived = engine.transition(playerFrame(19, routes = fixtureRoutes(engine)))
         assertTrue(arrived.effects.any { it.kind == EffectKind.WARN })
         assertTrue(arrived.effects.any { it.kind == EffectKind.MATERIALIZE && it.announceWave })
         acknowledge(engine, arrived)
@@ -102,7 +107,7 @@ class InvasionDirectorTest {
         engine.transition(playerFrame(1))
         invasion = track(engine).invasion!!
         assertEquals(1, invasion.currentWave)
-        engine.transition(playerFrame(0, surfaces = listOf(grid())))
+        engine.transition(playerFrame(0, routes = fixtureRoutes(engine)))
         drainWave(engine)
         engine.transition(playerFrame(50))
         assertEquals(2, track(engine).invasion!!.currentWave)
@@ -118,7 +123,7 @@ class InvasionDirectorTest {
         val players = listOf(observation("a", 0), observation("b", 20))
         engine.transition(DirectorFrame(0, players = players))
         engine.transition(DirectorFrame(979, players = players,
-            surfaces = listOf(grid("a", 0))))
+            strategicRoutes = fixtureRoutes(engine, "a")))
         val beforeWarning = engine.snapshot().pendingEffects.values
         assertTrue(beforeWarning.none { it.kind == EffectKind.WARN || it.kind == EffectKind.MATERIALIZE })
 
@@ -189,12 +194,12 @@ class InvasionDirectorTest {
         var transition = engine.transition(DirectorFrame(0, players = far))
         acknowledge(engine, transition)
         transition = engine.transition(DirectorFrame(20, players = far,
-            surfaces = listOf(grid("a", 0), grid("b", 100)), liveCampaignMobs = 90, secondSpawnCount = 20))
+            strategicRoutes = fixtureRoutes(engine, "a", "b"), liveCampaignMobs = 90, secondSpawnCount = 20))
         assertTrue(transition.effects.filter { it.kind == EffectKind.MATERIALIZE }.sumOf { it.members.size } <= 4)
         acknowledge(engine, transition)
         val served = mutableSetOf<String>()
         repeat(4) {
-            transition = engine.transition(DirectorFrame(60, players = far, surfaces = listOf(grid("a", 0), grid("b", 100))))
+            transition = engine.transition(DirectorFrame(60, players = far, strategicRoutes = fixtureRoutes(engine, "a", "b")))
             transition.effects.filter { it.kind == EffectKind.MATERIALIZE }.forEach {
                 assertTrue(it.members.size <= 6)
                 assertTrue(it.members.count { member -> roster.first { recruit -> recruit.entityId == member.recruitId }.role == RecruitRole.ELITE } <= 1)
@@ -206,22 +211,23 @@ class InvasionDirectorTest {
         assertTrue(track(engine, "a").invasion!!.nextPacketTick >= engine.snapshot().tick)
     }
 
-    @Test fun `only the first packet at an anchor requests native path validation`() {
+    @Test fun `successive packets share the same proven anchor without another route observation`() {
         val engine = InvasionDirector.create(51, fixedSpec())
         engine.transition(DirectorFrame(0, commands = listOf(
             DirectorCommand.Force("player", EncounterKind.ASSAULT, intensity = 5),
         )))
         engine.transition(playerFrame(0))
-        val first = engine.transition(playerFrame(20, surfaces = listOf(grid())))
+        val first = engine.transition(playerFrame(20, routes = fixtureRoutes(engine)))
         val firstPacket = first.effects.single { it.kind == EffectKind.MATERIALIZE }
-        assertTrue(firstPacket.validateApproach)
+        assertNotNull(firstPacket.anchor)
+        assertNull(track(engine).invasion!!.validatedAnchor)
         acknowledge(engine, first)
         assertEquals(firstPacket.anchor, track(engine).invasion!!.validatedAnchor)
 
-        val second = engine.transition(playerFrame(20, surfaces = listOf(grid())))
+        val second = engine.transition(playerFrame(20))
         val secondPacket = second.effects.single { it.kind == EffectKind.MATERIALIZE }
-        assertFalse(secondPacket.validateApproach)
         assertEquals(firstPacket.anchor, secondPacket.anchor)
+        assertTrue(firstPacket.members.intersect(secondPacket.members.toSet()).isEmpty())
     }
 
     @Test fun `forced intensity is exact bounded and consumed by one encounter`() {
@@ -246,8 +252,8 @@ class InvasionDirectorTest {
         val engine = InvasionDirector.create(6, fixedSpec())
         engine.transition(DirectorFrame(0, commands = listOf(DirectorCommand.Force("player", EncounterKind.ASSAULT))))
         acknowledge(engine, engine.transition(playerFrame(0)))
-        engine.transition(playerFrame(20, surfaces = listOf(grid())))
-        engine.transition(playerFrame(0, surfaces = listOf(grid())))
+        engine.transition(playerFrame(20, routes = fixtureRoutes(engine)))
+        engine.transition(playerFrame(0, routes = fixtureRoutes(engine)))
         assertTrue(engine.snapshot().pendingEffects.values.any { it.kind == EffectKind.MATERIALIZE })
         val injured = engine.transition(DirectorFrame(0, players = listOf(observation("player", low = true))))
         assertTrue(injured.effects.none { it.kind == EffectKind.RETIRE })
@@ -268,7 +274,7 @@ class InvasionDirectorTest {
             DirectorCommand.Force("player", EncounterKind.ASSAULT),
         )))
         engine.transition(playerFrame(0))
-        val arrival = engine.transition(playerFrame(20, surfaces = listOf(grid())))
+        val arrival = engine.transition(playerFrame(20, routes = fixtureRoutes(engine)))
         assertTrue(arrival.effects.any { it.kind == EffectKind.MATERIALIZE })
         acknowledge(engine, arrival)
 
@@ -287,7 +293,7 @@ class InvasionDirectorTest {
             "An unavailable target suspends the assault clock")
         assertTrue(unavailable.effects.none { it.kind == EffectKind.RETIRE || it.kind == EffectKind.MATERIALIZE })
 
-        engine.transition(playerFrame(1, surfaces = listOf(grid())))
+        engine.transition(playerFrame(1, routes = fixtureRoutes(engine)))
         val resumed = track(engine).invasion!!
         assertEquals(invasionId, resumed.invasionId)
         assertEquals(0L, resumed.targetUnavailableTicks)
@@ -295,63 +301,51 @@ class InvasionDirectorTest {
         assertEquals(InvasionPhase.ACTIVE, resumed.phase)
     }
 
-    @Test fun `route requires a complete connected loaded observation and rejects partial progress`() {
-        val target = BlockPoint("minecraft:overworld", 0, 64, 0)
-        val open = (-4..4).map { x -> SurfaceCell(x, 64, 0) }
-        assertNotNull(SurfaceApproach.choose(open, target, rules, 1))
-        assertNull(SurfaceApproach.choose(open.filter { it.x !in -1..1 }, target, rules, 1))
-        assertNull(SurfaceApproach.choose(open.map { if (kotlin.math.abs(it.x) == 1) it.copy(bodyY = 68) else it }, target, rules, 1))
-        assertNull(SurfaceApproach.choose(open.map { it.copy(passable = false) }, target, rules, 1))
+    @Test fun `a partial or missing route cannot offer a spawn on the near side`() {
+        val start = Point(10, 1, 0)
+        val goal = Point(0, 1, 0)
+        val bounds = Bounds(-1..11, -2..8, -1..1)
+        fun probe(blocked: (Point) -> Cell?) = route(start, goal, bounds, 2_000) { p ->
+            blocked(p) ?: corridor(p, 0..10, 0..0)
+        }
+        val (open, witness) = probe { null }
+        assertEquals(Result.Reachable(goal), open)
+        assertEquals(start, witness.first())
+        assertEquals(goal, witness.last())
+        assertEquals(Point(4, 1, 0), VirtualReachability.spawnPoint(witness, 2..4) { true })
+        val (missing, partial) = probe { if (it.x == 2 && it.z == 0) Cell.UNKNOWN else null }
+        assertEquals(Result.Unknown(VirtualReachability.UnknownReason.TERRAIN_OR_BOUNDARY), missing)
+        assertNull(VirtualReachability.spawnPoint(partial, 2..4) { true })
     }
 
-    @Test fun `strategic routing starts far away respects cliffs walls and unknown terrain`() {
-        val strategicRules = rules.copy(
-            strategicOriginMinimumBlocks = 8, strategicOriginMaximumBlocks = 10,
-            strategicMaximumSearchExpansions = 2_000,
-        )
-        val target = BlockPoint("minecraft:overworld", 0, 64, 0)
-        val open = (0..10).flatMap { x -> (-2..2).map { z -> SurfaceCell(x, 64, z) } }
-        val route = assertNotNull(StrategicRoutePlanner.plan(open, target, strategicRules, 9))
-        assertEquals(StrategicFrontier.OPEN, route.frontier)
-        assertTrue(maxOf(kotlin.math.abs(route.route.first().x), kotlin.math.abs(route.route.first().z)) in 8..10)
-        assertTrue(maxOf(kotlin.math.abs(route.route.last().x), kotlin.math.abs(route.route.last().z)) in 2..4)
-
-        val sealed = open.map { if (it.x == 1) it.copy(passable = false) else it }
-        val defense = assertNotNull(StrategicRoutePlanner.plan(sealed, target, strategicRules, 9))
-        assertEquals(StrategicFrontier.DEFENSE, defense.frontier)
-        assertTrue(defense.route.last().x >= 2, "A sealed target must leave the materialization point outside")
-
-        val cliff = open.map { if (it.x in -1..1) it.copy(bodyY = 72) else it }
-        val cliffRoute = assertNotNull(StrategicRoutePlanner.plan(cliff, target, strategicRules, 9))
-        assertEquals(StrategicFrontier.DEFENSE, cliffRoute.frontier)
-
-        val incomplete = open.filter { it.x >= 3 }
-        assertNull(StrategicRoutePlanner.plan(incomplete, target, strategicRules, 9),
-            "Missing never-recorded terrain must block rather than be guessed")
+    @Test fun `strategic routing starts at its actual origin and does not cross walls or cliffs`() {
+        val start = Point(10, 1, 0)
+        val goal = Point(0, 1, 0)
+        val bounds = Bounds(-1..11, -2..8, -1..1)
+        fun probe(obstructed: (Point) -> Boolean) = route(start, goal, bounds, 2_000) { p ->
+            if (obstructed(p)) Cell.OBSTACLE else corridor(p, 0..10, 0..0)
+        }
+        assertEquals(Result.Reachable(goal), probe { false }.first)
+        assertEquals(Result.Unreachable, probe { it.x == 1 }.first)
+        assertEquals(Result.Unreachable, probe { it.x == 1 && it.y <= 6 }.first)
+        assertEquals(Result.Unreachable, probe { it.y == 1 }.first)
+        val budgetLimited = route(start, goal, bounds, 2) { corridor(it, 0..10, 0..0) }
+        assertEquals(Result.Unknown(VirtualReachability.UnknownReason.SEARCH_BUDGET), budgetLimited.first)
+        assertTrue(budgetLimited.second.isEmpty(), "A partial route is never a valid spawn witness")
     }
 
-    @Test fun `failed exact approach is excluded and deterministic routing selects another side`() {
-        val retryRules = rules.copy(
-            strategicOriginMinimumBlocks = 8, strategicOriginMaximumBlocks = 10,
-            strategicMaximumSearchExpansions = 8_000,
-        )
-        val target = BlockPoint("minecraft:overworld", 0, 64, 0)
-        val north = (1..10).flatMap { x -> (-5..-3).map { z -> SurfaceCell(x, 64, z) } }
-        val south = (1..10).flatMap { x -> (3..5).map { z -> SurfaceCell(x, 64, z) } }
-        val joins = (-5..5).flatMap { z -> (0..1).map { x -> SurfaceCell(x, 64, z) } }
-        val cells = (north + south + joins).distinctBy { it.x to it.z }
-        val first = assertNotNull(StrategicRoutePlanner.plan(cells, target, retryRules, 41L))
-        val failed = BlockPoint(target.dimension, first.route.last().x, first.route.last().bodyY, first.route.last().z)
-        val second = assertNotNull(StrategicRoutePlanner.plan(
-            cells, target, retryRules, 42L, excludedApproaches = listOf(failed),
-        ))
-        val separation = maxOf(kotlin.math.abs(second.route.last().x - failed.x),
-            kotlin.math.abs(second.route.last().z - failed.z))
-        assertTrue(separation > minOf(16, retryRules.approachMinimumBlocks),
-            "Retry anchor ${second.route.last()} must leave the rejected approach zone around $failed")
-        assertEquals(second, StrategicRoutePlanner.plan(
-            cells, target, retryRules, 42L, excludedApproaches = listOf(failed),
-        ))
+    @Test fun `failed exact approach is excluded and next eligible spot on the witness is deterministic`() {
+        val start = Point(10, 1, 0)
+        val goal = Point(0, 1, 0)
+        val (result, witness) = route(start, goal, Bounds(-1..11, -2..8, -1..1), 2_000) {
+            corridor(it, 0..10, 0..0)
+        }
+        assertEquals(Result.Reachable(goal), result)
+        val failed = assertNotNull(VirtualReachability.spawnPoint(witness, 2..4) { true })
+        val alternate = assertNotNull(VirtualReachability.spawnPoint(witness, 2..4) { it != failed })
+        assertEquals(Point(3, 1, 0), alternate)
+        assertEquals(alternate, VirtualReachability.spawnPoint(witness, 2..4) { it != failed })
+        assertNull(VirtualReachability.spawnPoint(witness, 2..4) { false })
     }
 
     @Test fun `failed materialization immediately retries a different proven route`() {
@@ -367,10 +361,10 @@ class InvasionDirectorTest {
         var invasion = track(engine).invasion!!
         val firstRoute = (6 downTo 4).map { BlockPoint("minecraft:overworld", it, 64, 0) }
         val first = engine.transition(DirectorFrame(0, players = listOf(observation("player")), strategicRoutes = listOf(
-            StrategicRouteObservation("player", invasion.invasionId, invasion.routeTarget!!, 10, firstRoute, StrategicFrontier.OPEN),
+            StrategicRouteObservation("player", invasion.invasionId, invasion.routeTarget!!, 10, firstRoute),
         )))
         val failedEffect = first.effects.single { it.kind == EffectKind.MATERIALIZE }
-        assertTrue(failedEffect.validateApproach)
+        assertEquals(firstRoute.last(), failedEffect.anchor)
         engine.transition(DirectorFrame(0, effectResults = listOf(EffectResult(failedEffect.effectId, false))))
         invasion = track(engine).invasion!!
         assertEquals(firstRoute.last(), invasion.usedAnchors.single())
@@ -380,10 +374,10 @@ class InvasionDirectorTest {
         val alternateRoute = (6 downTo 4).map { BlockPoint("minecraft:overworld", it, 64, 4) }
         val retry = engine.transition(DirectorFrame(travelRules.normalPacketSpacingTicks,
             players = listOf(observation("player")), strategicRoutes = listOf(
-            StrategicRouteObservation("player", invasion.invasionId, invasion.routeTarget!!, 10, alternateRoute, StrategicFrontier.OPEN),
+            StrategicRouteObservation("player", invasion.invasionId, invasion.routeTarget!!, 10, alternateRoute),
         )))
         val retryEffect = retry.effects.single { it.kind == EffectKind.MATERIALIZE }
-        assertTrue(retryEffect.validateApproach)
+        assertNull(track(engine).invasion!!.validatedAnchor)
         assertEquals(alternateRoute.last(), retryEffect.anchor)
         assertEquals(2, track(engine).invasion!!.usedAnchors.size)
     }
@@ -399,7 +393,7 @@ class InvasionDirectorTest {
         assertEquals(100, invasion.scheduledArrivalEligibleTick)
         val points = (6 downTo 4).map { BlockPoint("minecraft:overworld", it, 64, 0) }
         engine.transition(DirectorFrame(0, players = listOf(observation("player")), strategicRoutes = listOf(
-            StrategicRouteObservation("player", invasion.invasionId, invasion.routeTarget!!, 4, points, StrategicFrontier.OPEN),
+            StrategicRouteObservation("player", invasion.invasionId, invasion.routeTarget!!, 4, points),
         )))
         val journeyOrigin = track(engine).invasion!!.strategicOrigin
         val progressBefore = track(engine).invasion!!.strategicTravelMilliBlocks
@@ -434,7 +428,7 @@ class InvasionDirectorTest {
 
         val points = (6 downTo 4).map { BlockPoint("minecraft:overworld", it, 64, 0) }
         val routed = engine.transition(DirectorFrame(0, players = listOf(observation("player")), strategicRoutes = listOf(
-            StrategicRouteObservation("player", invasion.invasionId, invasion.routeTarget!!, 9, points, StrategicFrontier.OPEN),
+            StrategicRouteObservation("player", invasion.invasionId, invasion.routeTarget!!, 9, points),
         )))
         assertTrue(routed.effects.any { it.kind == EffectKind.MATERIALIZE })
         val expedited = track(engine).invasion!!
@@ -481,7 +475,7 @@ class InvasionDirectorTest {
         var invasion = track(engine).invasion!!
         val invasionId = invasion.invasionId
         engine.transition(DirectorFrame(0, players = listOf(observation("player")), strategicRoutes = listOf(
-            StrategicRouteObservation("player", invasionId, invasion.routeTarget!!, 1, emptyList(), StrategicFrontier.UNKNOWN),
+            StrategicRouteObservation("player", invasionId, invasion.routeTarget!!, 1, emptyList()),
         )))
 
         val timedOut = engine.transition(playerFrame(40))
@@ -495,7 +489,7 @@ class InvasionDirectorTest {
 
         val route = (6 downTo 4).map { BlockPoint("minecraft:overworld", it, 64, 0) }
         val resumed = engine.transition(DirectorFrame(0, players = listOf(observation("player")), strategicRoutes = listOf(
-            StrategicRouteObservation("player", invasionId, invasion.routeTarget!!, 2, route, StrategicFrontier.OPEN),
+            StrategicRouteObservation("player", invasionId, invasion.routeTarget!!, 2, route),
         )))
         assertEquals(invasionId, track(engine).invasion!!.invasionId)
         assertEquals(InvasionPhase.READY_TO_MATERIALIZE, track(engine).invasion!!.phase)
@@ -504,63 +498,96 @@ class InvasionDirectorTest {
         assertTrue(resumed.effects.none { it.kind == EffectKind.RETIRE })
     }
 
-    @Test fun `moving target relocates virtual corridor without resetting travel progress`() {
+    @Test fun `moving target replans from the fixed origin without resetting travel progress`() {
         val engine = InvasionDirector.create(81, fixedSpec())
         engine.transition(playerFrame(94))
         val before = track(engine).invasion!!
-        val originOffset = before.strategicOrigin!!.x - before.routeTarget!!.x to
-            (before.strategicOrigin!!.z - before.routeTarget!!.z)
+        val origin = assertNotNull(before.strategicOrigin)
         val progress = before.strategicTravelMilliBlocks
 
         engine.transition(DirectorFrame(0, players = listOf(observation("player", 20))))
         val moved = track(engine).invasion!!
         assertEquals(progress, moved.strategicTravelMilliBlocks)
-        assertEquals(20 + originOffset.first, moved.strategicOrigin!!.x)
-        assertEquals(originOffset.second, moved.strategicOrigin!!.z)
+        assertEquals(20, moved.routeTarget?.x)
+        assertEquals(origin, moved.strategicOrigin)
         assertEquals("target_moved", moved.lastRouteFailure)
     }
 
-    @Test fun `default distant origin corpus is deterministic and reaches the approach band`() {
-        val target = BlockPoint("minecraft:overworld", 0, 64, 0)
-        val recordedCorridor = (0..768).map { SurfaceCell(it, 64, 0) }
-        fun corpus() = (0L..1_023L).map { seed ->
-            assertNotNull(StrategicRoutePlanner.plan(recordedCorridor, target, InvasionRules(), seed))
+    @Test fun `default distant origin corpus is deterministic and its routes contain stock spawn spots`() {
+        val target = Point(0, 1, 0)
+        fun corpus(): List<Pair<Point, Point>> {
+            val byOrigin = mutableMapOf<Int, Pair<Point, Point>>()
+            return (0L..1_023L).map { seed ->
+                val x = Random(seed).nextInt(512, 769)
+                byOrigin.getOrPut(x) {
+                    val start = Point(x, 1, 0)
+                    val (result, witness) = route(start, target, Bounds(-1..769, -2..8, -1..1), 2_000) {
+                        corridor(it, 0..768, 0..0)
+                    }
+                    assertEquals(Result.Reachable(target), result)
+                    assertEquals(start, witness.first())
+                    assertEquals(target, witness.last())
+                    start to assertNotNull(VirtualReachability.spawnPoint(witness, 48..72) { true })
+                }
+            }
         }
         val first = corpus()
         assertEquals(first, corpus())
-        first.forEach { result ->
-            assertTrue(result.route.first().x in 512..768)
-            assertTrue(result.route.last().x in 48..72)
-            assertEquals(StrategicFrontier.OPEN, result.frontier)
+        first.forEach { (start, spawn) ->
+            assertTrue(start.x in 512..768)
+            assertTrue(spawn.x in 48..72)
         }
     }
 
-    @Test fun `production scale terrain atlas routes without stalling the server tick`() {
-        val target = BlockPoint("minecraft:overworld", 0, 64, 0)
-        val recordedTerrain = (0..768).flatMap { x ->
-            (-24..23).map { z -> SurfaceCell(x, 64, z) }
-        }
-        lateinit var result: StrategicRoutePlanner.Result
+    @Test fun `production scale 3D terrain routes in bounded slices`() {
+        val target = Point(0, 1, 0)
+        val start = Point(768, 1, 0)
+        lateinit var witness: List<Point>
         val elapsed = measureTimeMillis {
-            result = assertNotNull(StrategicRoutePlanner.plan(recordedTerrain, target, InvasionRules(), 29L))
+            val search = VirtualReachability(start, Bounds(-1..769, -2..8, -25..24),
+                { it == target }, { 2 * it.lowerBoundTo(target) }, 16_384,
+                { corridor(it, 0..768, -24..23) }, retainWitness = true)
+            assertEquals(Result.Running, search.advance(128))
+            assertEquals(128, search.expanded)
+            assertEquals(Result.Reachable(target), settleRoute(search))
+            witness = search.witness
         }
-        assertTrue(elapsed < 2_000, "Production-scale strategic routing took ${elapsed}ms")
-        assertTrue(result.route.first().x in 512..768)
-        assertTrue(result.route.last().x in 48..72)
+        assertTrue(elapsed < 2_000, "Production-scale routing took ${elapsed}ms")
+        assertEquals(start, witness.first())
+        assertEquals(target, witness.last())
+        assertTrue(assertNotNull(VirtualReachability.spawnPoint(witness, 48..72) { true }).x in 48..72)
     }
 
-    @Test fun `connected recorded approach wins before an unrelated explored island exhausts the search budget`() {
-        val target = BlockPoint("minecraft:overworld", 0, 64, 0)
-        val connected = (0..540).flatMap { x -> (-2..2).map { z -> SurfaceCell(x, 64, z) } }
-        val unrelated = (512..620).flatMap { x -> (300..408).map { z -> SurfaceCell(x, 64, z) } }
-        val constrained = InvasionRules(strategicMaximumSearchExpansions = 700)
+    @Test fun `disconnected explored terrain never replaces the campaign origin`() {
+        val target = Point(0, 1, 0)
+        val start = Point(540, 1, 0)
+        val bounds = Bounds(-1..621, -2..8, -3..409)
+        fun terrain(p: Point) = if (p.x in 512..620 && p.z in 300..408) corridor(p, 512..620, 300..408)
+            else corridor(p, 0..540, -2..2)
+        val (result, witness) = route(start, target, bounds, 700, ::terrain)
+        assertEquals(Result.Reachable(target), result)
+        assertEquals(start, witness.first())
+        assertTrue(assertNotNull(VirtualReachability.spawnPoint(witness, 48..72) { true }).x in 48..72)
+        val (isolated, noWitness) = route(Point(540, 1, 350), target, bounds, 700, ::terrain)
+        assertTrue(isolated !is Result.Reachable)
+        assertTrue(noWitness.isEmpty())
+    }
 
-        val result = assertNotNull(StrategicRoutePlanner.plan(unrelated + connected, target, constrained, 8665659058770451541L))
+    private fun corridor(point: Point, xs: IntRange, zs: IntRange): Cell = when {
+        point.x !in xs || point.z !in zs -> Cell.OBSTACLE
+        point.y <= 0 -> Cell.SUPPORT
+        else -> Cell.CLEAR
+    }
 
-        assertTrue(result.route.first().x in 512..540)
-        assertTrue(result.route.first().z in -2..2)
-        assertEquals(StrategicFrontier.OPEN, result.frontier)
-        assertTrue(result.route.last().x in 48..72)
+    private fun route(start: Point, target: Point, bounds: Bounds, limit: Int, terrain: (Point) -> Cell): Pair<Result, List<Point>> {
+        val search = VirtualReachability(start, bounds, { it == target }, { 2 * it.lowerBoundTo(target) }, limit,
+            terrain, retainWitness = true)
+        return settleRoute(search) to search.witness
+    }
+
+    private fun settleRoute(search: VirtualReachability): Result {
+        repeat(200) { search.advance(128).let { if (it != Result.Running) return it } }
+        error("bounded fixture search did not settle")
     }
 
     @Test fun `restore is exact schema is strict and invalid inputs fail closed`() {
@@ -588,7 +615,7 @@ class InvasionDirectorTest {
             scoutWindowMinTicks = 7_200, scoutWindowMaxTicks = 14_400,
             assaultWindowMinTicks = 72_000, assaultWindowMaxTicks = 144_000,
             assaultWarningSurfaceTicks = 0, scoutActiveTicks = 20, activeIdleTicks = 20,
-            approachMinimumBlocks = 2, approachMaximumBlocks = 4, approachTargetRadiusBlocks = 1,
+            approachMinimumBlocks = 2, approachMaximumBlocks = 4,
         )
         val engine = InvasionDirector.create(seed, InvasionRuntimeSpec.create(corpusRules, roster))
         engine.transition(playerFrame(0))
@@ -597,12 +624,16 @@ class InvasionDirectorTest {
         val assaultDue = initial.nextAssaultEligibleTick
         var scouts = 0
         var assaults = 0
+        var newlyDispatched = true
         repeat(1_000) {
-            var transition = engine.transition(playerFrame(200, surfaces = listOf(grid())))
+            val routes = if (newlyDispatched) fixtureRoutes(engine) else emptyList()
+            var transition = engine.transition(playerFrame(200, routes = routes))
+            newlyDispatched = transition.events.any { it.type in setOf("scout_started", "assault_dispatched") }
             scouts += transition.events.count { event -> event.type == "scout_started" }
             assaults += transition.events.count { event -> event.type == "assault_warned" }
             if (transition.effects.isNotEmpty()) {
                 transition = engine.transition(playerFrame(0, results = transition.effects.map { EffectResult(it.effectId) }))
+                newlyDispatched = newlyDispatched || transition.events.any { it.type in setOf("scout_started", "assault_dispatched") }
                 scouts += transition.events.count { event -> event.type == "scout_started" }
                 assaults += transition.events.count { event -> event.type == "assault_warned" }
             }
@@ -672,13 +703,21 @@ class InvasionDirectorTest {
         PlayerObservation(id, true, true, true, BlockPoint("minecraft:overworld", x, 64, 0), low)
     private fun playerFrame(
         ticks: Long, eligible: Boolean = true, surface: Boolean = true,
-        results: List<EffectResult> = emptyList(), surfaces: List<SurfaceGridObservation> = emptyList(),
+        results: List<EffectResult> = emptyList(), routes: List<StrategicRouteObservation> = emptyList(),
         defeats: List<MemberDefeatObservation> = emptyList(),
     ) = DirectorFrame(ticks, listOf(PlayerObservation("player", eligible, surface, true,
-        BlockPoint("minecraft:overworld", 0, 64, 0))), surfaces, results, defeats)
-    private fun grid(id: String = "player", center: Int = 0) = SurfaceGridObservation(
-        id, (-4..4).map { SurfaceCell(center + it, 64, 0) }, complete = true,
-    )
+        BlockPoint("minecraft:overworld", 0, 64, 0))), effectResults = results, memberDefeats = defeats,
+        strategicRoutes = routes)
+
+    private fun fixtureRoutes(engine: InvasionDirector, vararg ids: String = arrayOf("player")): List<StrategicRouteObservation> {
+        val snapshot = engine.snapshot()
+        return ids.mapNotNull { id ->
+            val invasion = snapshot.tracks[id]?.invasion ?: return@mapNotNull null
+            val target = invasion.routeTarget ?: return@mapNotNull null
+            StrategicRouteObservation(id, invasion.invasionId, target, snapshot.tick,
+                listOf(target.copy(x = target.x + 4)))
+        }
+    }
     private fun track(engine: InvasionDirector, id: String = "player") = engine.snapshot().tracks.getValue(id)
 
     private fun acknowledge(engine: InvasionDirector, transition: DirectorTransition) {
@@ -687,13 +726,13 @@ class InvasionDirectorTest {
     }
 
     private fun materializeCurrent(engine: InvasionDirector) {
-        val transition = engine.transition(playerFrame(0, surfaces = listOf(grid())))
+        val transition = engine.transition(playerFrame(0, routes = fixtureRoutes(engine)))
         acknowledge(engine, transition)
     }
 
     private fun drainWave(engine: InvasionDirector) {
         repeat(4) {
-            val transition = engine.transition(playerFrame(20, surfaces = listOf(grid())))
+            val transition = engine.transition(playerFrame(20, routes = fixtureRoutes(engine)))
             acknowledge(engine, transition)
             val invasion = track(engine).invasion ?: return
             if (invasion.waves[invasion.currentWave].materializedMembers == invasion.waves[invasion.currentWave].members.size) return

@@ -40,15 +40,19 @@ object InvasionExperiment {
         }
         while (now < durationTicks) {
             val snapshot = engine.snapshot()
-            val surfaces = players.mapIndexedNotNull { index, id ->
-                snapshot.tracks[id]?.invasion
-                    ?.takeIf { it.phase in setOf(InvasionPhase.WARNED, InvasionPhase.APPROACHING, InvasionPhase.READY_TO_MATERIALIZE) && it.observedCells.isEmpty() }
-                    ?.let { openGrid(id, index * 256) }
+            // This runner exercises the director, not Minecraft travel. Supply the same
+            // observation contract as the terrain adapter, with a synthetic open approach.
+            val routes = snapshot.tracks.values.mapNotNull { track ->
+                val invasion = track.invasion?.takeIf { it.phase == InvasionPhase.APPROACHING && it.strategicRoute.isEmpty() }
+                    ?: return@mapNotNull null
+                val target = invasion.routeTarget ?: return@mapNotNull null
+                StrategicRouteObservation(track.playerId, invasion.invasionId, target, now,
+                    listOf(target.copy(x = target.x + spec.rules.approachMaximumBlocks)))
             }
             val transition = engine.transition(DirectorFrame(
                 elapsedTicks = stepTicks,
                 players = players.mapIndexed { index, id -> PlayerObservation(id, true, true, true, BlockPoint("minecraft:overworld", index * 256, 64, 0)) },
-                surfaces = surfaces,
+                strategicRoutes = routes,
             ))
             record(transition)
             val results = transition.effects.map { EffectResult(it.effectId) }
@@ -82,13 +86,6 @@ object InvasionExperiment {
             intensities.minOrNull() ?: 0, intensities.maxOrNull() ?: 0, checks,
         )
     }
-
-    private fun openGrid(playerId: String, centerX: Int) = SurfaceGridObservation(
-        playerId,
-        ((-72..72).map { dx -> SurfaceCell(centerX + dx, 64, 0) } +
-            (-72..72).map { z -> SurfaceCell(centerX, 64, z) }).distinctBy { it.x to it.z },
-        complete = true,
-    )
 }
 
 object InvasionRunner {

@@ -8,7 +8,6 @@ object PillagerCampaignsConfig {
     val enabled: ForgeConfigSpec.BooleanValue
     val disableVanillaPatrolSpawning: ForgeConfigSpec.BooleanValue
     val intervalTicks: ForgeConfigSpec.IntValue
-    val surfaceSampleBudget: ForgeConfigSpec.IntValue
     private val scoutMin: ForgeConfigSpec.IntValue
     private val scoutMax: ForgeConfigSpec.IntValue
     private val scoutActive: ForgeConfigSpec.IntValue
@@ -23,7 +22,6 @@ object PillagerCampaignsConfig {
     private val timeTier: ForgeConfigSpec.IntValue
     private val approachMin: ForgeConfigSpec.IntValue
     private val approachMax: ForgeConfigSpec.IntValue
-    private val searchExpansions: ForgeConfigSpec.IntValue
     private val localRetry: ForgeConfigSpec.IntValue
     private val localTimeout: ForgeConfigSpec.IntValue
     private val activeIdle: ForgeConfigSpec.IntValue
@@ -36,8 +34,6 @@ object PillagerCampaignsConfig {
         enabled = b.define("enabled", true)
         disableVanillaPatrolSpawning = b.define("disable_vanilla_patrol_spawning", true)
         intervalTicks = b.defineInRange("interval_ticks", 20, 1, 1_200)
-        surfaceSampleBudget = b.comment("Retained compatibility key from 0.4; strategic routing now uses the persistent loaded-terrain atlas.")
-            .defineInRange("surface_sample_budget", 16_384, 64, 65_536)
         b.pop()
 
         b.push("scouts")
@@ -71,7 +67,6 @@ object PillagerCampaignsConfig {
         b.push("approach")
         approachMin = b.defineInRange("minimum_blocks", 48, 8, 256)
         approachMax = b.defineInRange("maximum_blocks", 72, 8, 384)
-        searchExpansions = b.defineInRange("maximum_search_expansions", 4_096, 64, 65_536)
         localRetry = b.defineInRange("local_retry_ticks", 100, 20, 1_200)
         localTimeout = b.defineInRange("local_timeout_ticks", 2_400, 200, 24_000)
         b.pop()
@@ -96,7 +91,6 @@ object PillagerCampaignsConfig {
         scoutActiveTicks = scoutActive.get().toLong(),
         approachMinimumBlocks = minOf(approachMin.get(), approachMax.get()),
         approachMaximumBlocks = maxOf(approachMin.get(), approachMax.get()),
-        maximumSearchExpansions = searchExpansions.get(),
         localApproachRetryTicks = localRetry.get().toLong(),
         localApproachTimeoutTicks = localTimeout.get().toLong(),
         activeIdleTicks = activeIdle.get().toLong(),

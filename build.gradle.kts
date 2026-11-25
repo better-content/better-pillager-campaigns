@@ -291,7 +291,7 @@ tasks.jacocoTestReport {
                         "**/PillagerCampaignsConfig*",
                         "**/InvasionRuntime*",
                         "**/PillagerWorldData*",
-                        "**/SurfaceGridSampler*",
+                        "**/LoadedSpawnChecks*",
                         "**/InvasionRoster*",
                         "**/api/CampaignStatusApi*",
                         "**/gametest/**",
